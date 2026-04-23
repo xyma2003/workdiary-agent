@@ -8,10 +8,32 @@ Uses independent RouterState (does not share AgentState).
 """
 from __future__ import annotations
 
+import os
 from typing_extensions import TypedDict
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
+
+
+# ---------------------------------------------------------------------------
+# Helper: build ChatAnthropic with ANTHROPIC_CUSTOM_HEADERS if set
+# ---------------------------------------------------------------------------
+
+def _make_llm() -> ChatAnthropic:
+    """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
+
+    The environment variable is a newline-separated list of 'Key: Value' pairs.
+    Required by the Meituan internal proxy (mcli.sankuai.com) to identify the caller.
+    """
+    custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
+    headers: dict[str, str] = {}
+    if custom_headers_str:
+        for line in custom_headers_str.split("\n"):
+            line = line.strip()
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip()] = v.strip()
+    return ChatAnthropic(model="claude-sonnet-4-5", default_headers=headers)
 
 
 class RouterState(TypedDict, total=False):
@@ -43,7 +65,7 @@ def analyze_content_node(state: RouterState) -> dict:
     si_text = state.get("structured_info_text", "")
     combined = f"{raw}\n\n结构化摘要：{si_text}" if si_text else raw
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5")
+    llm = _make_llm()
     response = llm.invoke([
         SystemMessage(content=_ANALYZE_SYSTEM),
         HumanMessage(content=f"请分析以下工作内容的特征：\n\n{combined}"),
@@ -56,7 +78,7 @@ def decide_template_node(state: RouterState) -> dict:
     features = state.get("content_features", "")
     raw = state.get("raw_input", "")
 
-    llm = ChatAnthropic(model="claude-sonnet-4-5")
+    llm = _make_llm()
     response = llm.invoke([
         SystemMessage(content=_DECIDE_SYSTEM),
         HumanMessage(content=f"内容特征：{features}\n\n原始描述：{raw}"),
