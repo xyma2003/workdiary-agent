@@ -116,6 +116,15 @@ def draft_node(state: AgentState) -> dict:
     else:
         context = f"原始描述：{raw_input}"
 
+    # Phase 3 (D-11): append enrichment context when available
+    git_log = state.get("git_log")
+    if git_log:
+        context += f"\n今日 Git commits：\n{git_log}"
+
+    data_summary = state.get("data_summary")
+    if data_summary:
+        context += f"\n数据指标：\n{data_summary}"
+
     system_prompt = _TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM)
 
     llm = _make_llm()
