@@ -5,7 +5,14 @@ Verifies all 4 ROADMAP success criteria without pytest.
 Run: conda run -n llm-data-pipeline python scripts/test_skeleton.py
 """
 import sys
+import os
 import typing
+
+# Ensure project root is on sys.path regardless of cwd when script is invoked
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 
 def test_agent_state_fields():
