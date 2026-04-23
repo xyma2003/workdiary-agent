@@ -45,9 +45,9 @@ completed: 2026-04-23
 
 ## Performance
 
-- **Duration:** ~5 min
+- **Duration:** ~10 min
 - **Completed:** 2026-04-23
-- **Tasks:** 1 completed (Task 2 is a human-verify checkpoint — pending)
+- **Tasks:** 2 completed
 - **Files modified:** 1
 
 ## Accomplishments
@@ -63,6 +63,7 @@ completed: 2026-04-23
 ## Task Commits
 
 1. **Task 1: Extend draft_node context building with git_log and data_summary** - `7321833` (feat)
+2. **Task 2: Human verification — smoke test Phase 3 enrichment end-to-end** - APPROVED (no code commit)
 
 ## Files Created/Modified
 
@@ -88,7 +89,12 @@ None — draft_node enrichment context is fully wired.
 
 ## Checkpoint Status
 
-Task 2 (`checkpoint:human-verify`) has been reached. Awaiting human smoke test approval before marking Phase 3 complete.
+Task 2 (`checkpoint:human-verify`) — APPROVED by human 2026-04-23.
+
+Smoke test results:
+- Test 1 PASS: invalid repo_path → git_log=None, no exception
+- Test 2 PASS: empty data_input → data_summary=None
+- Test 3 PASS: draft generated with enrichment context; git commits (abc1234/def5678) and data_summary (转化率+15%) naturally integrated into 混合型 template draft
 
 ---
 ## Self-Check: PASSED
@@ -99,4 +105,4 @@ Task 2 (`checkpoint:human-verify`) has been reached. Awaiting human smoke test a
 
 ---
 *Phase: 03-enrichment-tools*
-*Completed: 2026-04-23 (Task 1); awaiting Task 2 human verification*
+*Completed: 2026-04-23*
