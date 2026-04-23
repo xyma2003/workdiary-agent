@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-core-llm-nodes-and-template-routing-02-02-PLAN.md
-last_updated: "2026-04-23T08:39:39.378Z"
+stopped_at: Completed 02-core-llm-nodes-and-template-routing-02-03-PLAN.md
+last_updated: "2026-04-23T08:59:36.898Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 4
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 02 (core-llm-nodes-and-template-routing) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-04-23
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-graph-skeleton P02 | 4 | 2 tasks | 12 files |
 | Phase 01-graph-skeleton P03 | 4 | 2 tasks | 3 files |
 | Phase 02-core-llm-nodes-and-template-routing P02 | 5min | 2 tasks | 4 files |
+| Phase 02-core-llm-nodes-and-template-routing P03 | 12min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Recent decisions affecting current work:
 - [Phase 01-graph-skeleton]: No interrupt_before at compile time — Phase 4 uses interrupt() inside review node body; InMemorySaver stays from Phase 1 and Phase 4 only swaps to SqliteSaver
 - [Phase 02-core-llm-nodes-and-template-routing]: TemplateRouterAgent uses two-step pipeline (analyze_content->decide_template) for richer classification context; sub-graph compiled at module level
 - [Phase 02-core-llm-nodes-and-template-routing]: RouterState is independent TypedDict isolated from AgentState; fallback to 混合型 for unexpected LLM output
+- [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() factory parses ANTHROPIC_CUSTOM_HEADERS env var for ChatAnthropic default_headers — proxy requires X-Working-Dir header not read automatically
+- [Phase 02-core-llm-nodes-and-template-routing]: Each template has dedicated system prompt constant; 【已选用XX模板】 mandated as first line in prompt (TMPL-02 compliance)
 
 ### Pending Todos
 
@@ -85,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-23T08:39:39.376Z
-Stopped at: Completed 02-core-llm-nodes-and-template-routing-02-02-PLAN.md
+Last session: 2026-04-23T08:59:36.896Z
+Stopped at: Completed 02-core-llm-nodes-and-template-routing-02-03-PLAN.md
 Resume file: None
