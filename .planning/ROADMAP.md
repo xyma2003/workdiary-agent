@@ -46,8 +46,13 @@ Plans:
   3. The polished output leads with outcomes, contains at least one quantified statement (or explicit "未提供量化指标" marker), and uses goal-completion verbs (完成/推进/对齐/输出/跟进)
   4. User can see which template was selected ("已选用XX模板" visible in graph state)
   5. User can override the auto-selected template type and the draft re-generates using the chosen template
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 4 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Write failing test suite (RED) for all 5 Phase 2 success criteria
+- [ ] 02-02-PLAN.md — Implement extract_node (LLM structured output) + TemplateRouterAgent sub-graph + route_template_node
+- [ ] 02-03-PLAN.md — Implement draft_node (3-template system) + polish_node (boss-perspective refinement)
+- [ ] 02-04-PLAN.md — Integration: turn all tests GREEN + human checkpoint for polished output quality
 
 ### Phase 3: Enrichment Tools
 **Goal**: Optional git commit context and optional numeric/tabular data are safely ingested and available to downstream nodes without breaking the main flow when absent
@@ -100,7 +105,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
-| 2. Core LLM Nodes and Template Routing | 0/TBD | Not started | - |
+| 2. Core LLM Nodes and Template Routing | 0/4 | Not started | - |
 | 3. Enrichment Tools | 0/TBD | Not started | - |
 | 4. Human-in-the-Loop | 0/TBD | Not started | - |
 | 5. Storage and Export | 0/TBD | Not started | - |
