@@ -7,7 +7,7 @@
 
 ### Agent 核心流程 (AGENT)
 
-- [ ] **AGENT-01**: 用户可以用自然语言（口语化）在输入框中描述今天的工作内容
+- [x] **AGENT-01**: 用户可以用自然语言（口语化）在输入框中描述今天的工作内容
 - [ ] **AGENT-02**: 系统从用户输入中提取结构化信息（任务、产出、遇到的问题、推进进度）
 - [ ] **AGENT-03**: 用户可选填写本地 Git repo 路径，系统自动读取今日 commits 作为辅助上下文
 - [ ] **AGENT-04**: 系统可解析用户粘贴的数字/指标、表格文本或上传的 CSV 文件，提取数据特征并融入日报（数据输入为可选项）
@@ -66,7 +66,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AGENT-01 | Phase 1 | Pending |
+| AGENT-01 | Phase 1 | Complete |
 | AGENT-02 | Phase 2 | Pending |
 | AGENT-03 | Phase 3 | Pending |
 | AGENT-04 | Phase 3 | Pending |
