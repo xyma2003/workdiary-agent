@@ -11,7 +11,7 @@ semantics are introduced, and the UI is the thinnest layer added on top of worki
 
 ## Phases
 
-- [ ] **Phase 1: Graph Skeleton** - Runnable StateGraph with all nodes as stubs and correct edge wiring
+- [x] **Phase 1: Graph Skeleton** - Runnable StateGraph with all nodes as stubs and correct edge wiring (completed 2026-04-23)
 - [ ] **Phase 2: Core LLM Nodes and Template Routing** - Extract, draft, polish nodes producing boss-friendly output; TemplateRouterAgent sub-graph
 - [ ] **Phase 3: Enrichment Tools** - Optional git log and data input context enrichment
 - [ ] **Phase 4: Human-in-the-Loop** - Interrupt/resume cycle with SqliteSaver, revision loop capped at 3
@@ -34,7 +34,7 @@ semantics are introduced, and the UI is the thinnest layer added on top of worki
 Plans:
 - [x] 01-01-PLAN.md — Install deps (langgraph 1.1.9 + 4 others) and write test suite in RED state
 - [x] 01-02-PLAN.md — Create state.py (AgentState + StructuredInfo) and all 8 node stubs
-- [ ] 01-03-PLAN.md — Assemble graph.py, wire edges, compile with InMemorySaver, turn all 4 tests GREEN
+- [x] 01-03-PLAN.md — Assemble graph.py, wire edges, compile with InMemorySaver, turn all 4 tests GREEN
 
 ### Phase 2: Core LLM Nodes and Template Routing
 **Goal**: Real Claude API calls produce structured extraction, template-routed drafts, and boss-friendly polished output from raw Chinese work descriptions
@@ -99,7 +99,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Graph Skeleton | 0/3 | Not started | - |
+| 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
 | 2. Core LLM Nodes and Template Routing | 0/TBD | Not started | - |
 | 3. Enrichment Tools | 0/TBD | Not started | - |
 | 4. Human-in-the-Loop | 0/TBD | Not started | - |
