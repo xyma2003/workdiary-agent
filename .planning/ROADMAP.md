@@ -52,7 +52,7 @@ Plans:
 - [x] 02-01-PLAN.md — Write failing test suite (RED) for all 5 Phase 2 success criteria
 - [x] 02-02-PLAN.md — Implement extract_node (LLM structured output) + TemplateRouterAgent sub-graph + route_template_node
 - [x] 02-03-PLAN.md — Implement draft_node (3-template system) + polish_node (boss-perspective refinement)
-- [ ] 02-04-PLAN.md — Integration: turn all tests GREEN + human checkpoint for polished output quality
+- [x] 02-04-PLAN.md — Integration: turn all tests GREEN + human checkpoint for polished output quality
 
 ### Phase 3: Enrichment Tools
 **Goal**: Optional git commit context and optional numeric/tabular data are safely ingested and available to downstream nodes without breaking the main flow when absent

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-core-llm-nodes-and-template-routing-02-03-PLAN.md
-last_updated: "2026-04-23T08:59:36.898Z"
+stopped_at: "Checkpoint 02-04 Task 2: awaiting human verification of end-to-end pipeline"
+last_updated: "2026-04-23T09:15:24.336Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-graph-skeleton P03 | 4 | 2 tasks | 3 files |
 | Phase 02-core-llm-nodes-and-template-routing P02 | 5min | 2 tasks | 4 files |
 | Phase 02-core-llm-nodes-and-template-routing P03 | 12min | 2 tasks | 2 files |
+| Phase 02 P04 | 7min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase 02-core-llm-nodes-and-template-routing]: RouterState is independent TypedDict isolated from AgentState; fallback to 混合型 for unexpected LLM output
 - [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() factory parses ANTHROPIC_CUSTOM_HEADERS env var for ChatAnthropic default_headers — proxy requires X-Working-Dir header not read automatically
 - [Phase 02-core-llm-nodes-and-template-routing]: Each template has dedicated system prompt constant; 【已选用XX模板】 mandated as first line in prompt (TMPL-02 compliance)
+- [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() with ANTHROPIC_CUSTOM_HEADERS must be used in all LLM-calling modules — bare ChatAnthropic() without proxy headers causes 400 BadRequestError on Meituan proxy
 
 ### Pending Todos
 
@@ -88,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-23T08:59:36.896Z
-Stopped at: Completed 02-core-llm-nodes-and-template-routing-02-03-PLAN.md
+Last session: 2026-04-23T09:14:56.795Z
+Stopped at: Checkpoint 02-04 Task 2: awaiting human verification of end-to-end pipeline
 Resume file: None
