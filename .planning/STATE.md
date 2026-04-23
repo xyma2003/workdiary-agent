@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Checkpoint 02-04 Task 2: awaiting human verification of end-to-end pipeline"
-last_updated: "2026-04-23T09:15:24.336Z"
+status: ready
+stopped_at: "Completed 02-04-PLAN.md — Phase 2 done, ready for Phase 3"
+last_updated: "2026-04-23T09:30:00.000Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 
 ## Current Position
 
-Phase: 02 (core-llm-nodes-and-template-routing) — EXECUTING
-Plan: 3 of 4
-Status: Ready to execute
+Phase: 02 (core-llm-nodes-and-template-routing) — COMPLETE
+Plan: 4 of 4 (all plans done)
+Status: Phase 2 complete — ready for Phase 3 (Enrichment Tools)
 Last activity: 2026-04-23
 
 Progress: [░░░░░░░░░░] 0%
@@ -56,7 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-graph-skeleton P03 | 4 | 2 tasks | 3 files |
 | Phase 02-core-llm-nodes-and-template-routing P02 | 5min | 2 tasks | 4 files |
 | Phase 02-core-llm-nodes-and-template-routing P03 | 12min | 2 tasks | 2 files |
-| Phase 02 P04 | 7min | 1 tasks | 2 files |
+| Phase 02 P04 | 20min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -77,6 +77,7 @@ Recent decisions affecting current work:
 - [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() factory parses ANTHROPIC_CUSTOM_HEADERS env var for ChatAnthropic default_headers — proxy requires X-Working-Dir header not read automatically
 - [Phase 02-core-llm-nodes-and-template-routing]: Each template has dedicated system prompt constant; 【已选用XX模板】 mandated as first line in prompt (TMPL-02 compliance)
 - [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() with ANTHROPIC_CUSTOM_HEADERS must be used in all LLM-calling modules — bare ChatAnthropic() without proxy headers causes 400 BadRequestError on Meituan proxy
+- [Phase 02-core-llm-nodes-and-template-routing]: route_template_node must guard against overwriting user-set template_type — check state.get("template_type") and skip LLM classification if already set (TMPL-03)
 
 ### Pending Todos
 
@@ -90,6 +91,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-23T09:14:56.795Z
-Stopped at: Checkpoint 02-04 Task 2: awaiting human verification of end-to-end pipeline
+Last session: 2026-04-23T09:30:00.000Z
+Stopped at: Completed 02-04-PLAN.md — Phase 2 complete
 Resume file: None

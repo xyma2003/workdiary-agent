@@ -41,17 +41,17 @@ duration: 7min
 completed: 2026-04-23
 ---
 
-# Phase 02 Plan 04: Run Phase 2 Test Suite and Reach Human Verification Summary
+# Phase 02 Plan 04: Run Phase 2 Test Suite and Human Verification Summary
 
-**All 5 Phase 2 tests GREEN by adding _make_llm() proxy-header factory to extract_node and TemplateRouterAgent; 9/9 total tests passing**
+**All 5 Phase 2 tests GREEN, TMPL-03 user-override bug fixed (576f476), and end-to-end pipeline human-verified: template routing, boss-perspective polish, and quantification all confirmed**
 
 ## Performance
 
-- **Duration:** ~7 min
+- **Duration:** ~20 min (including human review)
 - **Started:** 2026-04-23T09:00:00Z
-- **Completed:** 2026-04-23T09:07:00Z
-- **Tasks:** 1 completed (Task 2 is checkpoint — awaiting human)
-- **Files modified:** 2
+- **Completed:** 2026-04-23T09:20:00Z
+- **Tasks:** 2 completed (1 auto + 1 human verify)
+- **Files modified:** 3
 
 ## Accomplishments
 
@@ -59,19 +59,24 @@ completed: 2026-04-23
 - Fixed TemplateRouterAgent analyze_content_node and decide_template_node to use _make_llm()
 - All 5 Phase 2 tests pass: extract, router classify, route_template_node, draft, polish
 - All 4 Phase 1 regression tests still pass (no regressions)
+- Fixed TMPL-03 bug: route_template_node was overwriting user-set template_type; now respects pre-set override
+- Human verified end-to-end pipeline: template selection visible, boss-perspective verbs present, quantification confirmed, user override respected
 
 ## Task Commits
 
 Each task was committed atomically:
 
 1. **Task 1: Run Phase 2 test suite and verify all 5 tests pass (GREEN)** - `a077e6e` (fix)
+2. **[Post-task fix] TMPL-03 route_template_node must respect user-set template_type override** - `576f476` (fix)
+3. **Task 2: Human confirms end-to-end pipeline quality** - (human checkpoint — approved)
 
-**Plan metadata:** (pending — waiting for human checkpoint Task 2)
+**Plan metadata:** (see final commit)
 
 ## Files Created/Modified
 
 - `workdiary_agent/nodes/extract.py` - Added _make_llm() factory with ANTHROPIC_CUSTOM_HEADERS support; replaced bare ChatAnthropic() call
 - `workdiary_agent/router/agent.py` - Added _make_llm() factory; replaced bare ChatAnthropic() in analyze_content_node and decide_template_node
+- `workdiary_agent/nodes/route_template.py` - Fixed TMPL-03 bug: guard clause added to skip LLM classification when template_type already set in state
 
 ## Decisions Made
 
@@ -91,8 +96,18 @@ Each task was committed atomically:
 
 ---
 
-**Total deviations:** 1 auto-fixed (1 bug — missing proxy headers)
-**Impact on plan:** Required fix for correctness. No scope creep. Pattern was already established in draft.py/polish.py — just not propagated to extract.py and router/agent.py.
+**2. [Rule 1 - Bug] Fixed TMPL-03: route_template_node overwrote user-set template_type**
+- **Found during:** Task 1 post-test / orchestrator review
+- **Issue:** route_template_node called TemplateRouterAgent.classify() unconditionally, overwriting any template_type the user had pre-set in state. Test B (user override to 业务型 for technical input) was failing because LLM would re-classify as 技术型.
+- **Fix:** Added guard clause: `if state.get("template_type"): return state` — skips LLM classification when template_type already set by user.
+- **Files modified:** workdiary_agent/nodes/route_template.py
+- **Verification:** Test B output shows 【已选用业务型模板】; human confirmed during checkpoint
+- **Committed in:** 576f476 (post-task fix by orchestrator)
+
+---
+
+**Total deviations:** 2 auto-fixed (1 bug — missing proxy headers; 1 bug — TMPL-03 user override)
+**Impact on plan:** Both required fixes for correctness. No scope creep. TMPL-03 was a stated requirement (plan frontmatter) that was silently broken until integration testing exposed it.
 
 ## Issues Encountered
 
@@ -109,9 +124,19 @@ None — no external service configuration required beyond existing ANTHROPIC_* 
 
 ## Next Phase Readiness
 
-- Phase 2 complete pending human verification of end-to-end pipeline quality (Task 2 checkpoint)
-- Human must run the two integration test scripts (Test A + Test B) to verify: template_type, draft headers, polished output verbs/quantification, and template_type override
-- Once approved, Phase 3 (human-in-the-loop) can begin
+- Phase 2 complete — all 7 requirements covered: AGENT-02, AGENT-05, AGENT-06, AGENT-07, TMPL-01, TMPL-02, TMPL-03
+- Human-verified: template routing correct, boss-perspective polish confirmed, user override works
+- All 9 tests passing (5 Phase 2 + 4 Phase 1), no regressions
+- Ready for Phase 3 (Enrichment Tools — git log and numeric data ingestion)
+
+## Self-Check: PASSED
+
+- FOUND: workdiary_agent/nodes/extract.py
+- FOUND: workdiary_agent/router/agent.py
+- FOUND: workdiary_agent/nodes/route_template.py
+- FOUND: .planning/phases/02-core-llm-nodes-and-template-routing/02-04-SUMMARY.md
+- FOUND: commit a077e6e (fix: proxy headers in extract and router)
+- FOUND: commit 576f476 (fix: TMPL-03 route_template_node user override)
 
 ---
 *Phase: 02-core-llm-nodes-and-template-routing*
