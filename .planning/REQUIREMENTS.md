@@ -8,12 +8,12 @@
 ### Agent 核心流程 (AGENT)
 
 - [x] **AGENT-01**: 用户可以用自然语言（口语化）在输入框中描述今天的工作内容
-- [ ] **AGENT-02**: 系统从用户输入中提取结构化信息（任务、产出、遇到的问题、推进进度）
+- [x] **AGENT-02**: 系统从用户输入中提取结构化信息（任务、产出、遇到的问题、推进进度）
 - [ ] **AGENT-03**: 用户可选填写本地 Git repo 路径，系统自动读取今日 commits 作为辅助上下文
 - [ ] **AGENT-04**: 系统可解析用户粘贴的数字/指标、表格文本或上传的 CSV 文件，提取数据特征并融入日报（数据输入为可选项）
-- [ ] **AGENT-05**: TemplateRouterAgent 根据提取的内容自动判断日报类型（技术型/业务型/混合型）
-- [ ] **AGENT-06**: 系统按选定模板生成日报初稿
-- [ ] **AGENT-07**: 系统以老板视角对初稿进行润色改写（突出业务价值、量化指标、用"完成/推进/对齐/输出/跟进"等动词）
+- [x] **AGENT-05**: TemplateRouterAgent 根据提取的内容自动判断日报类型（技术型/业务型/混合型）
+- [x] **AGENT-06**: 系统按选定模板生成日报初稿
+- [x] **AGENT-07**: 系统以老板视角对初稿进行润色改写（突出业务价值、量化指标、用"完成/推进/对齐/输出/跟进"等动词）
 
 ### 人工确认与修改 (HITL)
 
@@ -24,9 +24,9 @@
 
 ### 模板系统 (TMPL)
 
-- [ ] **TMPL-01**: 系统内置3种日报模板：技术型（突出方案/进度）、业务型（突出数据/结论/下一步）、混合型（技术产出关联业务影响）
-- [ ] **TMPL-02**: TemplateRouterAgent 的路由决策对用户可见（显示"已选用XX模板"）
-- [ ] **TMPL-03**: 用户可手动覆盖自动选择的模板类型
+- [x] **TMPL-01**: 系统内置3种日报模板：技术型（突出方案/进度）、业务型（突出数据/结论/下一步）、混合型（技术产出关联业务影响）
+- [x] **TMPL-02**: TemplateRouterAgent 的路由决策对用户可见（显示"已选用XX模板"）
+- [x] **TMPL-03**: 用户可手动覆盖自动选择的模板类型
 
 ### 存储与导出 (STORE)
 
@@ -67,19 +67,19 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | AGENT-01 | Phase 1 | Complete |
-| AGENT-02 | Phase 2 | Pending |
+| AGENT-02 | Phase 2 | Complete |
 | AGENT-03 | Phase 3 | Pending |
 | AGENT-04 | Phase 3 | Pending |
-| AGENT-05 | Phase 2 | Pending |
-| AGENT-06 | Phase 2 | Pending |
-| AGENT-07 | Phase 2 | Pending |
+| AGENT-05 | Phase 2 | Complete |
+| AGENT-06 | Phase 2 | Complete |
+| AGENT-07 | Phase 2 | Complete |
 | HITL-01 | Phase 4 | Pending |
 | HITL-02 | Phase 4 | Pending |
 | HITL-03 | Phase 4 | Pending |
 | HITL-04 | Phase 4 | Pending |
-| TMPL-01 | Phase 2 | Pending |
-| TMPL-02 | Phase 2 | Pending |
-| TMPL-03 | Phase 2 | Pending |
+| TMPL-01 | Phase 2 | Complete |
+| TMPL-02 | Phase 2 | Complete |
+| TMPL-03 | Phase 2 | Complete |
 | STORE-01 | Phase 5 | Pending |
 | STORE-02 | Phase 5 | Pending |
 | STORE-03 | Phase 5 | Pending |
