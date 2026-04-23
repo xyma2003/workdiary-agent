@@ -65,7 +65,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Write failing test suite (RED) for all 3 Phase 3 success criteria
+- [x] 03-01-PLAN.md — Write failing test suite (RED) for all 3 Phase 3 success criteria
 - [ ] 03-02-PLAN.md — Add state.py fields (data_input, data_summary) + implement enrich_node (GitPython + LLM extraction)
 - [ ] 03-03-PLAN.md — Extend draft_node enrichment context + turn all 7 tests GREEN + human checkpoint
 
@@ -111,7 +111,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
-| 3. Enrichment Tools | 0/3 | Not started | - |
+| 3. Enrichment Tools | 1/3 | In Progress|  |
 | 4. Human-in-the-Loop | 0/TBD | Not started | - |
 | 5. Storage and Export | 0/TBD | Not started | - |
 | 6. Streamlit UI | 0/TBD | Not started | - |
