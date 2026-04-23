@@ -58,6 +58,8 @@ class AgentState(TypedDict, total=False):
     # --- Enrichment (Phase 3: enrich node) ---
     git_log: Optional[str]
     repo_path: Optional[str]
+    data_input: Optional[str]      # NEW (D-05): user's pasted numeric/tabular text
+    data_summary: Optional[str]    # NEW (D-06): LLM-extracted key metrics from data_input
 
     # --- Final output (Phase 5: save node) ---
     final_report: Optional[str]
