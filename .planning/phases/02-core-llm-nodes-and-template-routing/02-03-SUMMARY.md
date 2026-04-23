@@ -116,6 +116,14 @@ None - uses existing Anthropic API credentials from environment.
 - Ready for Phase 02-04: graph integration wiring all nodes into the full StateGraph
 - Deferred: extract.py and route_template.py also need _make_llm() fix (backport from this plan)
 
+## Self-Check: PASSED
+
+- FOUND: workdiary_agent/nodes/draft.py
+- FOUND: workdiary_agent/nodes/polish.py
+- FOUND: .planning/phases/02-core-llm-nodes-and-template-routing/02-03-SUMMARY.md
+- FOUND: commit a548288 (feat: draft_node)
+- FOUND: commit 83c07e2 (feat: polish_node)
+
 ---
 *Phase: 02-core-llm-nodes-and-template-routing*
 *Completed: 2026-04-23*
