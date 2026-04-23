@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-04-23T08:16:43.981Z"
-last_activity: 2026-04-23 -- Phase 02 execution started
+stopped_at: Completed 02-core-llm-nodes-and-template-routing-02-02-PLAN.md
+last_updated: "2026-04-23T08:39:39.378Z"
+last_activity: 2026-04-23
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 7
-  completed_plans: 3
+  completed_phases: 0
+  total_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 02 (core-llm-nodes-and-template-routing) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 02
-Last activity: 2026-04-23 -- Phase 02 execution started
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-04-23
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-graph-skeleton P02 | 4 | 2 tasks | 12 files |
 | Phase 01-graph-skeleton P03 | 4 | 2 tasks | 3 files |
+| Phase 02-core-llm-nodes-and-template-routing P02 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Recent decisions affecting current work:
 - [Phase 01-graph-skeleton]: graph.py minimal import stub created as Rule 3 auto-fix: test file imports at module level, blocking pytest collection without it; stub raises NotImplementedError keeping other tests RED
 - [Phase 01-graph-skeleton]: workdiary_agent/__init__.py is empty for now; build_graph export added in Plan 03 after graph.py fully implemented
 - [Phase 01-graph-skeleton]: No interrupt_before at compile time — Phase 4 uses interrupt() inside review node body; InMemorySaver stays from Phase 1 and Phase 4 only swaps to SqliteSaver
+- [Phase 02-core-llm-nodes-and-template-routing]: TemplateRouterAgent uses two-step pipeline (analyze_content->decide_template) for richer classification context; sub-graph compiled at module level
+- [Phase 02-core-llm-nodes-and-template-routing]: RouterState is independent TypedDict isolated from AgentState; fallback to 混合型 for unexpected LLM output
 
 ### Pending Todos
 
@@ -82,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-23T06:33:53.532Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-core-llm-nodes-and-template-routing/02-CONTEXT.md
+Last session: 2026-04-23T08:39:39.376Z
+Stopped at: Completed 02-core-llm-nodes-and-template-routing-02-02-PLAN.md
+Resume file: None

@@ -50,7 +50,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Write failing test suite (RED) for all 5 Phase 2 success criteria
-- [ ] 02-02-PLAN.md — Implement extract_node (LLM structured output) + TemplateRouterAgent sub-graph + route_template_node
+- [x] 02-02-PLAN.md — Implement extract_node (LLM structured output) + TemplateRouterAgent sub-graph + route_template_node
 - [ ] 02-03-PLAN.md — Implement draft_node (3-template system) + polish_node (boss-perspective refinement)
 - [ ] 02-04-PLAN.md — Integration: turn all tests GREEN + human checkpoint for polished output quality
 
@@ -105,7 +105,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
-| 2. Core LLM Nodes and Template Routing | 1/4 | In Progress|  |
+| 2. Core LLM Nodes and Template Routing | 2/4 | In Progress|  |
 | 3. Enrichment Tools | 0/TBD | Not started | - |
 | 4. Human-in-the-Loop | 0/TBD | Not started | - |
 | 5. Storage and Export | 0/TBD | Not started | - |
