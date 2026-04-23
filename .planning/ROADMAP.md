@@ -62,7 +62,12 @@ Plans:
   1. When a valid local git repo path is provided, today's commits appear in the polished report content
   2. When an invalid or empty repo path is provided, the graph completes normally with git_log set to None — no exception propagates
   3. When pasted numeric data or a CSV is provided, extracted metrics appear in the polished report; when absent, the report still generates without error
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Write failing test suite (RED) for all 3 Phase 3 success criteria
+- [ ] 03-02-PLAN.md — Add state.py fields (data_input, data_summary) + implement enrich_node (GitPython + LLM extraction)
+- [ ] 03-03-PLAN.md — Extend draft_node enrichment context + turn all 7 tests GREEN + human checkpoint
 
 ### Phase 4: Human-in-the-Loop
 **Goal**: The graph reliably pauses for user review after polish, resumes correctly after a decision, loops on revision feedback up to 3 times, and force-exits to save on the third rejection
@@ -106,7 +111,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
-| 3. Enrichment Tools | 0/TBD | Not started | - |
+| 3. Enrichment Tools | 0/3 | Not started | - |
 | 4. Human-in-the-Loop | 0/TBD | Not started | - |
 | 5. Storage and Export | 0/TBD | Not started | - |
 | 6. Streamlit UI | 0/TBD | Not started | - |
