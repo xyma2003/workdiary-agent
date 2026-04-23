@@ -11,8 +11,13 @@ def route_template_node(state: AgentState) -> dict:
     """Invoke TemplateRouterAgent sub-graph to determine template_type.
 
     Reads raw_input and optional structured_info from state.
+    If template_type is already set in state (user override, TMPL-03), skip classification.
     Returns {"template_type": "技术型" | "业务型" | "混合型"}.
     """
+    # TMPL-03: respect user override — if already set, skip auto-classification
+    if state.get("template_type") in {"技术型", "业务型", "混合型"}:
+        return {"template_type": state["template_type"]}
+
     raw_input = state.get("raw_input", "")
     structured_info = state.get("structured_info")
 
