@@ -9,7 +9,8 @@ DB_PATH is a module-level constant so tests can monkeypatch it:
 """
 import sqlite3
 import datetime
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Generator
 
 DB_PATH = "history.db"
 
@@ -25,13 +26,17 @@ CREATE TABLE IF NOT EXISTS reports (
 """
 
 
-def _get_conn(db_path: str) -> sqlite3.Connection:
-    """Open a new connection and ensure the reports table exists."""
+@contextmanager
+def _db(db_path: str) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager: open connection, ensure schema, yield, close."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute(_CREATE_TABLE_SQL)
-    conn.commit()
-    return conn
+    try:
+        conn.execute(_CREATE_TABLE_SQL)
+        conn.commit()
+        yield conn
+    finally:
+        conn.close()
 
 
 def save_report(state: Any) -> None:
@@ -46,16 +51,13 @@ def save_report(state: Any) -> None:
     template_type = state.get("template_type", "") or ""
     polished = state.get("polished", "") or ""
 
-    conn = _get_conn(DB_PATH)
-    try:
+    with _db(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO reports (date, template_type, raw_input, polished, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (date, template_type, raw_input, polished, created_at),
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def get_all_reports() -> list[dict]:
@@ -64,12 +66,9 @@ def get_all_reports() -> list[dict]:
     Used by Phase 6 Streamlit history view (STORE-02).
     Returns empty list if no reports exist.
     """
-    conn = _get_conn(DB_PATH)
-    try:
+    with _db(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT id, date, template_type, raw_input, polished, created_at "
             "FROM reports ORDER BY date DESC"
         ).fetchall()
         return [dict(row) for row in rows]
-    finally:
-        conn.close()
