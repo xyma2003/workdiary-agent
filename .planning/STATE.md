@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-02-PLAN.md — storage package with 7/7 tests GREEN
-last_updated: "2026-04-24T03:34:11.067Z"
+stopped_at: Completed 05-03 Tasks 1-2; paused at Task 3 human-verify checkpoint
+last_updated: "2026-04-24T03:39:09.747Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 16
+  completed_plans: 17
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 05 (storage-and-export) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Next: Phase 05 (Storage and Export)
 Status: Ready to execute
 Last activity: 2026-04-24
@@ -64,6 +64,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 04-human-in-the-loop P03 | 8min | 2 tasks | 4 files |
 | Phase 04-human-in-the-loop P04 | 15min | 2 tasks | 3 files |
 | Phase 05-storage-and-export P02 | 5 | 2 tasks | 3 files |
+| Phase 05 P03 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,8 @@ Recent decisions affecting current work:
 - [Phase 04-human-in-the-loop]: Test mocking pattern for multi-node graphs: all LLM-calling nodes (extract, draft, polish, enrich, route_template) must be patched via _make_llm or classify method — missing any one causes real API calls
 - [Phase 05-storage-and-export]: DB_PATH = 'history.db' (never 'graph_state.db') — app-owned history DB is separate from LangGraph checkpointer DB
 - [Phase 05-storage-and-export]: Module-level constants DB_PATH and EXPORTS_DIR allow tests to monkeypatch without import tricks
+- [Phase 05]: save_node is the single write point for history.db — no other node touches it
+- [Phase 05]: Phase 4 HITL tests tolerate real history.db/exports/ writes during test_approve_path — no mock needed for integration coverage
 
 ### Pending Todos
 
@@ -109,6 +112,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T03:34:11.065Z
-Stopped at: Completed 05-02-PLAN.md — storage package with 7/7 tests GREEN
+Last session: 2026-04-24T03:39:09.745Z
+Stopped at: Completed 05-03 Tasks 1-2; paused at Task 3 human-verify checkpoint
 Resume file: None

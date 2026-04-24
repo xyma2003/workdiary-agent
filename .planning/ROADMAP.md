@@ -15,7 +15,7 @@ semantics are introduced, and the UI is the thinnest layer added on top of worki
 - [x] **Phase 2: Core LLM Nodes and Template Routing** - Extract, draft, polish nodes producing boss-friendly output; TemplateRouterAgent sub-graph (completed 2026-04-23)
 - [x] **Phase 3: Enrichment Tools** - Optional git log and data input context enrichment (completed 2026-04-23)
 - [x] **Phase 4: Human-in-the-Loop** - Interrupt/resume cycle with SqliteSaver, revision loop capped at 3 (completed 2026-04-24)
-- [ ] **Phase 5: Storage and Export** - SQLite history writes and markdown file export
+- [x] **Phase 5: Storage and Export** - SQLite history writes and markdown file export (completed 2026-04-24)
 - [ ] **Phase 6: Streamlit UI** - Full input-to-export UI wired to the working graph
 
 ## Phase Details
@@ -101,7 +101,7 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md — Write RED test suite for storage and export (TDD)
 - [x] 05-02-PLAN.md — Create workdiary_agent/storage/ package (sqlite.py, export.py, __init__.py)
-- [ ] 05-03-PLAN.md — Upgrade save_node + full test GREEN + human verification checkpoint
+- [x] 05-03-PLAN.md — Upgrade save_node + full test GREEN + human verification checkpoint
 
 ### Phase 6: Streamlit UI
 **Goal**: A Streamlit app covers the full workflow — input, agent processing status, review with inline editing, accept/revise/export actions, and history browsing — wired to the working graph via session_state
@@ -124,5 +124,5 @@ Plans:
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
 | 3. Enrichment Tools | 3/3 | Complete   | 2026-04-23 |
 | 4. Human-in-the-Loop | 4/4 | Complete   | 2026-04-24 |
-| 5. Storage and Export | 2/3 | In Progress|  |
+| 5. Storage and Export | 3/3 | Complete   | 2026-04-24 |
 | 6. Streamlit UI | 0/TBD | Not started | - |
