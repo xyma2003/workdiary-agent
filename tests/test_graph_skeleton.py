@@ -62,17 +62,21 @@ def test_all_nodes_present():
 # ---------------------------------------------------------------------------
 
 def test_conditional_edge_logic():
-    """route_after_revise must route to 'review' unless revision_count >= 3."""
-    # Under limit
-    assert route_after_revise({"revision_count": 0}) == "review"
-    assert route_after_revise({"revision_count": 1}) == "review"
-    assert route_after_revise({"revision_count": 2}) == "review"
-    # At limit
+    """route_after_revise must route to 'polish' unless revision_count >= 3.
+
+    Phase 4 (D-06/D-07): destination changed from 'review' to 'polish' to support
+    the revise→polish→review loop. Guard logic (count >= 3 → save) is unchanged.
+    """
+    # Under limit — routes to polish for another revision pass
+    assert route_after_revise({"revision_count": 0}) == "polish"
+    assert route_after_revise({"revision_count": 1}) == "polish"
+    assert route_after_revise({"revision_count": 2}) == "polish"
+    # At limit — force exit to save
     assert route_after_revise({"revision_count": 3}) == "save"
     # Over limit
     assert route_after_revise({"revision_count": 4}) == "save"
     # Unset key — total=False TypedDict, must default to 0 via .get()
-    assert route_after_revise({}) == "review"
+    assert route_after_revise({}) == "polish"
 
 
 # ---------------------------------------------------------------------------

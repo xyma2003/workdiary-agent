@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from langgraph.types import Command
 from workdiary_agent.graph import build_graph, route_after_revise, route_after_review
+from workdiary_agent.state import StructuredInfo
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +23,16 @@ def _make_llm_mock(return_text: str = "polished draft") -> MagicMock:
     mock_response = MagicMock()
     mock_response.content = return_text
     mock_llm.invoke.return_value = mock_response
-    mock_llm.with_structured_output.return_value = mock_llm
+    # with_structured_output must return a mock whose invoke() returns a real StructuredInfo
+    # so that LangGraph's msgpack checkpointer can serialize the state.
+    mock_structured = MagicMock()
+    mock_structured.invoke.return_value = StructuredInfo(
+        tasks=["完成登录模块开发"],
+        outputs=["登录模块代码"],
+        blockers=[],
+        progress="登录模块开发完成",
+    )
+    mock_llm.with_structured_output.return_value = mock_structured
     return mock_llm
 
 
@@ -33,6 +43,8 @@ def _mock_all_llm_nodes():
         patch("workdiary_agent.nodes.draft._make_llm", return_value=_make_llm_mock("【已选用混合型模板】\n日报初稿内容")),
         patch("workdiary_agent.nodes.polish._make_llm", return_value=_make_llm_mock("polished content")),
         patch("workdiary_agent.nodes.enrich._make_llm", return_value=_make_llm_mock()),
+        patch("workdiary_agent.nodes.route_template.TemplateRouterAgent.classify",
+              return_value="混合型"),
     ]
 
 
@@ -90,11 +102,8 @@ def test_graph_pauses_at_review():
     g = _build_test_graph()
     cfg = {"configurable": {"thread_id": "test-sc1"}}
     mocks = _mock_all_llm_nodes()
-    # Patch extract to return a StructuredInfo-like mock
-    with mocks[0], mocks[1], mocks[2], mocks[3]:
-        with patch("workdiary_agent.nodes.extract.ChatAnthropic") as mock_cls:
-            mock_cls.return_value = _make_llm_mock()
-            result = g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
+    with mocks[0], mocks[1], mocks[2], mocks[3], mocks[4]:
+        result = g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
     # SC-1: graph must be paused, not completed
     state = g.get_state(cfg)
     assert "review" in state.next, (
@@ -116,9 +125,8 @@ def test_approve_path():
     g = _build_test_graph()
     cfg = {"configurable": {"thread_id": "test-sc2"}}
     mocks = _mock_all_llm_nodes()
-    with mocks[0], mocks[1], mocks[2], mocks[3]:
-        with patch("workdiary_agent.nodes.extract.ChatAnthropic"):
-            g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
+    with mocks[0], mocks[1], mocks[2], mocks[3], mocks[4]:
+        g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
     # Resume with approve
     result2 = g.invoke(Command(resume={"decision": "approve", "feedback": ""}), cfg)
     assert result2.get("final_report"), (
@@ -140,9 +148,8 @@ def test_revise_loop():
     g = _build_test_graph()
     cfg = {"configurable": {"thread_id": "test-sc3"}}
     mocks = _mock_all_llm_nodes()
-    with mocks[0], mocks[1], mocks[2], mocks[3]:
-        with patch("workdiary_agent.nodes.extract.ChatAnthropic"):
-            g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
+    with mocks[0], mocks[1], mocks[2], mocks[3], mocks[4]:
+        g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
     # First revise
     with mocks[2]:  # polish is called again during loop
         g.invoke(Command(resume={"decision": "revise", "feedback": "请加上业务影响"}), cfg)
@@ -164,9 +171,8 @@ def test_force_exit_after_3_revisions():
     g = _build_test_graph()
     cfg = {"configurable": {"thread_id": "test-sc4"}}
     mocks = _mock_all_llm_nodes()
-    with mocks[0], mocks[1], mocks[2], mocks[3]:
-        with patch("workdiary_agent.nodes.extract.ChatAnthropic"):
-            g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
+    with mocks[0], mocks[1], mocks[2], mocks[3], mocks[4]:
+        g.invoke({"raw_input": "今天完成了登录模块开发"}, cfg)
     for i in range(3):
         with mocks[2]:  # polish re-runs each revision loop
             g.invoke(
