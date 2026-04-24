@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-04-24T02:58:21.898Z"
+stopped_at: "Completed 04-04-PLAN.md (paused at Task 3 checkpoint:human-verify)"
+last_updated: "2026-04-24T03:12:20.666Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 11
-  completed_plans: 12
+  completed_plans: 14
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 04 (human-in-the-loop) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-04-24
 
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03-enrichment-tools P03 | 10min | 2 tasks | 1 file |
 | Phase 03-enrichment-tools P03 | 10min | 2 tasks | 1 files |
 | Phase 04-human-in-the-loop P03 | 8min | 2 tasks | 4 files |
+| Phase 04-human-in-the-loop P04 | 15min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,8 @@ Recent decisions affecting current work:
 - [Phase 04-human-in-the-loop]: interrupt() called without try/except in review_node — GraphInterrupt IS-A Exception, bare except would swallow it (D-02, Pitfall 1)
 - [Phase 04-human-in-the-loop]: revise_node only increments revision_count — human_feedback already written by review_node, not re-written (D-08, D-09)
 - [Phase 04-human-in-the-loop]: polish_node appends feedback suffix only when human_feedback is truthy — backward-compatible with Phase 2/3 (D-10, D-11)
+- [Phase 04-human-in-the-loop]: LangGraph state serialization: with_structured_output().invoke() must return real Pydantic model (StructuredInfo), not MagicMock — InMemorySaver ormsgpack cannot serialize MagicMock
+- [Phase 04-human-in-the-loop]: Test mocking pattern for multi-node graphs: all LLM-calling nodes (extract, draft, polish, enrich, route_template) must be patched via _make_llm or classify method — missing any one causes real API calls
 
 ### Pending Todos
 
@@ -102,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T02:58:21.895Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-04-24T03:12:20.664Z
+Stopped at: Completed 04-04-PLAN.md (paused at Task 3 checkpoint:human-verify)
 Resume file: None
