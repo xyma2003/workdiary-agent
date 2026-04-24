@@ -79,7 +79,13 @@ Plans:
   3. After `Command(resume={"decision": "revise", "feedback": "..."})`, the graph loops: polish → review pause → revision_count increments
   4. On the third rejection, the graph force-exits the loop and proceeds to save without a fourth interrupt
   5. Full interrupt/resume cycle verified in a standalone Python script (not Streamlit) before this phase is declared done
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Write RED test suite (9 tests covering all 5 HITL success criteria)
+- [ ] 04-02-PLAN.md — graph.py topology update: route_after_review, updated route_after_revise, SqliteSaver parameterization
+- [ ] 04-03-PLAN.md — Node implementations: review_node (interrupt), revise_node, polish_node (human_feedback), save_node (final_report)
+- [ ] 04-04-PLAN.md — Turn all tests GREEN + scripts/test_hitl_cycle.py + human verification checkpoint
 
 ### Phase 5: Storage and Export
 **Goal**: Every completed report is persisted to SQLite history and exportable as a dated markdown file, using a dedicated database separate from LangGraph checkpoints
