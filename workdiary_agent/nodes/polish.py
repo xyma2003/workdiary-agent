@@ -15,33 +15,10 @@ AGENT-07 requirements:
 D-10: If no numbers or metrics are found in the draft, insert "（未提供量化指标）" in the
      appropriate section rather than fabricating data.
 """
-import os
-
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import AgentState
-
-
-# ---------------------------------------------------------------------------
-# Helper: build ChatAnthropic with ANTHROPIC_CUSTOM_HEADERS if set
-# ---------------------------------------------------------------------------
-
-def _make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
-
-    The environment variable is a newline-separated list of 'Key: Value' pairs.
-    Required by the Meituan internal proxy (mcli.sankuai.com) to identify the caller.
-    """
-    custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
-    headers: dict[str, str] = {}
-    if custom_headers_str:
-        for line in custom_headers_str.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers[k.strip()] = v.strip()
-    return ChatAnthropic(model="claude-sonnet-4-5", default_headers=headers)
+from ..utils import make_llm
 
 
 _POLISH_SYSTEM = """你是一位资深职场写作顾问，专门从老板视角优化工作日报。
@@ -72,7 +49,7 @@ def polish_node(state: AgentState) -> dict:
     if not draft or draft == "[stub draft]":
         return {"polished": draft or ""}
 
-    llm = _make_llm()
+    llm = make_llm()
     content = f"请润色以下日报初稿：\n\n{draft}"
     human_feedback = state.get("human_feedback")
     if human_feedback:  # D-10: non-empty feedback appended

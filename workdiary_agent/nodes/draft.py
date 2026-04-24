@@ -10,33 +10,10 @@ Three templates hardcoded in system prompts (D-05, D-06, D-07, D-08):
 TMPL-02: Every draft begins with "【已选用XX模板】" for user visibility.
 TMPL-03: template_type is always read from state — never hardcoded.
 """
-import os
-
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import AgentState
-
-
-# ---------------------------------------------------------------------------
-# Helper: build ChatAnthropic with ANTHROPIC_CUSTOM_HEADERS if set
-# ---------------------------------------------------------------------------
-
-def _make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
-
-    The environment variable is a newline-separated list of 'Key: Value' pairs.
-    Required by the Meituan internal proxy (mcli.sankuai.com) to identify the caller.
-    """
-    custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
-    headers: dict[str, str] = {}
-    if custom_headers_str:
-        for line in custom_headers_str.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers[k.strip()] = v.strip()
-    return ChatAnthropic(model="claude-sonnet-4-5", default_headers=headers)
+from ..utils import make_llm
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +104,7 @@ def draft_node(state: AgentState) -> dict:
 
     system_prompt = _TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM)
 
-    llm = _make_llm()
+    llm = make_llm()
     response = llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"请根据以下信息生成日报初稿：\n\n{context}"),

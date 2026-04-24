@@ -1,32 +1,9 @@
 # workdiary_agent/nodes/extract.py
 """Extract node: parse raw Chinese work description into StructuredInfo via LLM."""
-import os
-
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import AgentState, StructuredInfo
-
-
-# ---------------------------------------------------------------------------
-# Helper: build ChatAnthropic with ANTHROPIC_CUSTOM_HEADERS if set
-# ---------------------------------------------------------------------------
-
-def _make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
-
-    The environment variable is a newline-separated list of 'Key: Value' pairs.
-    Required by the Meituan internal proxy (mcli.sankuai.com) to identify the caller.
-    """
-    custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
-    headers: dict[str, str] = {}
-    if custom_headers_str:
-        for line in custom_headers_str.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers[k.strip()] = v.strip()
-    return ChatAnthropic(model="claude-sonnet-4-5", default_headers=headers)
+from ..utils import make_llm
 
 
 _SYSTEM_PROMPT = """你是一个工作日报信息提取助手。请从用户的口语化工作描述中，提取以下结构化信息：
@@ -45,7 +22,7 @@ def extract_node(state: AgentState) -> dict:
     if not raw_input:
         return {"structured_info": StructuredInfo()}
 
-    llm = _make_llm()
+    llm = make_llm()
     structured_llm = llm.with_structured_output(StructuredInfo)
 
     messages = [

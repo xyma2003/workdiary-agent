@@ -123,9 +123,11 @@ def _run_generation():
                 config,
             )
         except Exception as e:
-            status_ui.update(label=f"生成失败: {e}", state="error")
+            import logging
+            logging.exception("Graph invoke failed")
+            status_ui.update(label="生成失败，请重试", state="error")
             st.session_state.app_state = "idle"
-            st.error(f"图执行出错: {e}")
+            st.error("生成日报时出现错误，请稍后重试。如问题持续请检查 API 配置。")
             return
 
         # Check interrupt: graph paused at review node
@@ -196,7 +198,9 @@ def _render_review_ui():
                 st.session_state.app_state = "done"
                 st.rerun()
             except Exception as e:
-                st.error(f"接受失败: {e}")
+                import logging
+                logging.exception("Accept failed")
+                st.error("接受操作失败，请重试。")
 
     # D-15 + D-17: Revise button — shows feedback input, then resumes with revise decision
     with col2:
@@ -235,7 +239,9 @@ def _render_review_ui():
                         st.session_state.app_state = "done"
                     st.rerun()
                 except Exception as e:
-                    st.error(f"重新生成失败: {e}")
+                    import logging
+                    logging.exception("Revise failed")
+                    st.error("重新生成失败，请重试。")
 
     # D-15 + D-19: Export download button — passes polished text directly (no file read, no reload)
     with col3:
@@ -262,7 +268,9 @@ def _render_history_page():
     try:
         reports = get_all_reports()   # Returns list[dict], date DESC (D-20)
     except Exception as e:
-        st.error(f"无法加载历史记录: {e}")
+        import logging
+        logging.exception("Failed to load history")
+        st.error("无法加载历史记录，请刷新重试。")
         return
 
     if not reports:
