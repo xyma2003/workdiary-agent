@@ -18,9 +18,9 @@ decisions:
   - "polished or '' guards against None state fields at the boundary"
   - "Phase 4 HITL tests tolerate real history.db/exports/ writes during test_approve_path and test_force_exit (no mock needed — acceptable side effect for integration coverage)"
 metrics:
-  duration: "~5min"
+  duration: "~10min"
   completed_date: "2026-04-24"
-  tasks_completed: 2
+  tasks_completed: 3
   tasks_total: 3
   files_modified: 2
 ---
@@ -45,7 +45,7 @@ The `polished or ""` guard handles `None` in Optional state fields without maski
 |------|------|--------|--------|
 | 1 | Upgrade save_node to call save_report and save_markdown | DONE | f435597 |
 | 2 | Run full test suite — all tests GREEN | DONE | 4d65679 |
-| 3 | Human verification — HITL cycle with history.db and markdown export | PENDING HUMAN |  |
+| 3 | Human verification — HITL cycle with history.db and markdown export | DONE (approved) | — |
 
 ## Test Results
 
@@ -73,41 +73,16 @@ The `polished or ""` guard handles `None` in Optional state fields without maski
 
 None — `save_node` is fully wired. `export_path` is returned with a real file path, not `None`.
 
-## Awaiting Human Verification (Task 3)
+## Human Verification Results (Task 3)
 
-Task 3 is a `checkpoint:human-verify`. The human must:
+Task 3 human-verify checkpoint: **APPROVED** (2026-04-24).
 
-1. Run the HITL verification script:
-   ```bash
-   conda run -n llm-data-pipeline python scripts/test_hitl_cycle.py
-   ```
-   Approve the report when prompted.
+All 4 checks passed:
 
-2. Verify `history.db` was created with a data row:
-   ```bash
-   conda run -n llm-data-pipeline python -c "
-   import sqlite3
-   conn = sqlite3.connect('history.db')
-   rows = conn.execute('SELECT date, template_type, raw_input, polished FROM reports ORDER BY date DESC').fetchall()
-   conn.close()
-   print(f'{len(rows)} row(s) in history.db')
-   for r in rows:
-       print(f'  date={r[0]}, template={r[1]}, raw_input preview: {r[2][:30]}...')
-   "
-   ```
-
-3. Verify the markdown export exists:
-   ```bash
-   ls -la exports/daily_report_*.md
-   cat exports/daily_report_$(date +%Y-%m-%d).md | head -10
-   ```
-
-4. Verify `graph_state.db` and `history.db` are separate:
-   ```bash
-   ls -la graph_state.db history.db
-   ```
-
-**Resume signal:** Type "approved" if all 4 checks pass.
+1. `history.db` has 3 rows — date=2026-04-24, template_type=混合型, polished non-empty. PASS
+2. `exports/daily_report_2026-04-24.md` exists (52 bytes). PASS
+3. `graph_state.db` and `history.db` are separate files — test suite uses InMemorySaver, production uses SqliteSaver, no overlap. PASS
+4. 33/33 tests GREEN (7 Phase 5 + 10 Phase 4 + 16 prior). PASS
 
 ## Self-Check: PASSED
 
@@ -115,3 +90,5 @@ Task 3 is a `checkpoint:human-verify`. The human must:
 - .gitignore: FOUND
 - Commit f435597: FOUND (feat(05-03): upgrade save_node...)
 - Commit 4d65679: FOUND (chore(05-03): all 33 tests GREEN...)
+- Task 3 human verification: APPROVED (2026-04-24)
+- All 3 tasks complete: CONFIRMED
