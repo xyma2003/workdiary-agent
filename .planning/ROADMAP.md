@@ -72,7 +72,7 @@ Plans:
 ### Phase 4: Human-in-the-Loop
 **Goal**: The graph reliably pauses for user review after polish, resumes correctly after a decision, loops on revision feedback up to 3 times, and force-exits to save on the third rejection
 **Depends on**: Phase 3
-**Requirements**: HITL-01, HITL-02, HITL-03, HITL-04
+**Requirements**: HITL-01, HITL-03, HITL-04
 **Success Criteria** (what must be TRUE):
   1. After `graph.invoke()`, `graph.get_state(config).next` equals `["review"]` — the graph is paused, not completed
   2. After `Command(resume={"decision": "approve"})`, the graph reaches save and returns a final_report
@@ -101,7 +101,7 @@ Plans:
 ### Phase 6: Streamlit UI
 **Goal**: A Streamlit app covers the full workflow — input, agent processing status, review with inline editing, accept/revise/export actions, and history browsing — wired to the working graph via session_state
 **Depends on**: Phase 5
-**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05
+**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05, HITL-02
 **Success Criteria** (what must be TRUE):
   1. User submits a work description and optional git path in the input form, clicks Generate, and sees processing status labels update as each node runs ("正在提取信息..." / "正在润色...")
   2. After generation, the polished report renders in an editable text area and "已选用XX模板" is displayed — user can accept, request revision with feedback, or edit inline
