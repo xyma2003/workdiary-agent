@@ -16,7 +16,7 @@ semantics are introduced, and the UI is the thinnest layer added on top of worki
 - [x] **Phase 3: Enrichment Tools** - Optional git log and data input context enrichment (completed 2026-04-23)
 - [x] **Phase 4: Human-in-the-Loop** - Interrupt/resume cycle with SqliteSaver, revision loop capped at 3 (completed 2026-04-24)
 - [x] **Phase 5: Storage and Export** - SQLite history writes and markdown file export (completed 2026-04-24)
-- [ ] **Phase 6: Streamlit UI** - Full input-to-export UI wired to the working graph
+- [x] **Phase 6: Streamlit UI** - Full input-to-export UI wired to the working graph (completed 2026-04-24)
 
 ## Phase Details
 
@@ -118,7 +118,7 @@ Plans:
 Plans:
 - [x] 06-01-PLAN.md — app.py scaffold: @st.cache_resource graph, session_state init, navigation, input form
 - [x] 06-02-PLAN.md — Generation flow: graph invoke with st.status labels, interrupt detection, review UI with HITL actions
-- [ ] 06-03-PLAN.md — History page + end-to-end human verification checkpoint
+- [x] 06-03-PLAN.md — History page + end-to-end human verification checkpoint
 
 ## Progress
 
@@ -129,4 +129,4 @@ Plans:
 | 3. Enrichment Tools | 3/3 | Complete   | 2026-04-23 |
 | 4. Human-in-the-Loop | 4/4 | Complete   | 2026-04-24 |
 | 5. Storage and Export | 3/3 | Complete   | 2026-04-24 |
-| 6. Streamlit UI | 2/3 | In Progress|  |
+| 6. Streamlit UI | 3/3 | Complete   | 2026-04-24 |

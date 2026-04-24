@@ -40,7 +40,7 @@
 - [x] **UI-02**: 界面展示 Agent 当前处理节点状态（如"正在提取信息…"/"正在润色…"）
 - [x] **UI-03**: 界面展示生成的日报内容，支持直接编辑
 - [x] **UI-04**: 界面提供"接受"/"重新生成（附反馈）"/"导出"操作按钮
-- [ ] **UI-05**: 界面提供历史日报查看入口
+- [x] **UI-05**: 界面提供历史日报查看入口
 
 ## v2 Requirements
 
@@ -87,7 +87,7 @@
 | UI-02 | Phase 6 | Complete |
 | UI-03 | Phase 6 | Complete |
 | UI-04 | Phase 6 | Complete |
-| UI-05 | Phase 6 | Pending |
+| UI-05 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total
