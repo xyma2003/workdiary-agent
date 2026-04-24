@@ -30,9 +30,9 @@
 
 ### 存储与导出 (STORE)
 
-- [ ] **STORE-01**: 每次生成的最终日报自动保存到 SQLite 历史库（含日期、模板类型、原始输入、最终输出）
-- [ ] **STORE-02**: 用户可在界面中查看历史日报列表（按日期排序）
-- [ ] **STORE-03**: 用户可一键将当前日报导出为 markdown 文件（文件名含日期）
+- [x] **STORE-01**: 每次生成的最终日报自动保存到 SQLite 历史库（含日期、模板类型、原始输入、最终输出）
+- [x] **STORE-02**: 用户可在界面中查看历史日报列表（按日期排序）
+- [x] **STORE-03**: 用户可一键将当前日报导出为 markdown 文件（文件名含日期）
 
 ### UI 界面 (UI)
 
@@ -80,9 +80,9 @@
 | TMPL-01 | Phase 2 | Complete |
 | TMPL-02 | Phase 2 | Complete |
 | TMPL-03 | Phase 2 | Complete |
-| STORE-01 | Phase 5 | Pending |
-| STORE-02 | Phase 5 | Pending |
-| STORE-03 | Phase 5 | Pending |
+| STORE-01 | Phase 5 | Complete |
+| STORE-02 | Phase 5 | Complete |
+| STORE-03 | Phase 5 | Complete |
 | UI-01 | Phase 6 | Pending |
 | UI-02 | Phase 6 | Pending |
 | UI-03 | Phase 6 | Pending |

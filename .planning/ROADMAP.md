@@ -99,7 +99,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Write RED test suite for storage and export (TDD)
+- [x] 05-01-PLAN.md — Write RED test suite for storage and export (TDD)
 - [ ] 05-02-PLAN.md — Create workdiary_agent/storage/ package (sqlite.py, export.py, __init__.py)
 - [ ] 05-03-PLAN.md — Upgrade save_node + full test GREEN + human verification checkpoint
 
