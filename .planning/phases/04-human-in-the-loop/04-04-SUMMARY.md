@@ -67,6 +67,7 @@ completed: 2026-04-24
 
 1. **Task 1: Turn all Phase 4 tests GREEN** - `dd5fa4d` (feat)
 2. **Task 2: Create scripts/test_hitl_cycle.py** - `f96e1ce` (feat)
+3. **Task 3: Human verification checkpoint** - APPROVED (no code commit — human-verify gate)
 
 ## Files Created/Modified
 - `tests/test_phase04_hitl.py` — Fixed extract mock (real StructuredInfo), added route_template mock, updated all integration tests to use mocks[4]
@@ -116,9 +117,25 @@ completed: 2026-04-24
 ## User Setup Required
 None - no external service configuration required.
 
+## Human Verification (Task 3)
+
+**Checkpoint type:** human-verify
+**Status:** APPROVED
+
+All 5 ROADMAP Phase 4 success criteria confirmed by human:
+- SC-1 OK: graph paused at review (revision_count=0) after invoke
+- SC-2 OK: final_report non-empty, graph at END after approve
+- SC-3 OK: paused at review again after revise, revision_count=1
+- SC-4 OK: force-exited to save at revision_count=3, no 4th interrupt
+- SC-5 OK: ALL 3 PATHS PASSED in scripts/test_hitl_cycle.py
+
+**Regression check:** 26/26 tests passing (all phases, no regressions)
+
+**Known warning:** LangGraph emits `Deserializing unregistered type workdiary_agent.state.StructuredInfo from checkpoint` — benign msgpack registration deprecation, does not affect functionality. Deferred to Phase 5 (`allowed_msgpack_modules` config).
+
 ## Next Phase Readiness
-- Phase 4 HITL fully verified: all 26 tests GREEN, standalone script confirms all 3 paths
-- Ready for Task 3 (human-verify checkpoint) then Phase 5 (Streamlit UI)
+- Phase 4 HITL fully verified and approved: all 26 tests GREEN, standalone script confirms all 3 paths
+- Phase 4 is COMPLETE — ready to proceed to Phase 5 (Storage and Export)
 - Phase 5 can import `build_graph(use_sqlite=True)` for persistent state; all HITL mechanics proven
 
 ---

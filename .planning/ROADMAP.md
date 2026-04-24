@@ -14,7 +14,7 @@ semantics are introduced, and the UI is the thinnest layer added on top of worki
 - [x] **Phase 1: Graph Skeleton** - Runnable StateGraph with all nodes as stubs and correct edge wiring (completed 2026-04-23)
 - [x] **Phase 2: Core LLM Nodes and Template Routing** - Extract, draft, polish nodes producing boss-friendly output; TemplateRouterAgent sub-graph (completed 2026-04-23)
 - [x] **Phase 3: Enrichment Tools** - Optional git log and data input context enrichment (completed 2026-04-23)
-- [ ] **Phase 4: Human-in-the-Loop** - Interrupt/resume cycle with SqliteSaver, revision loop capped at 3
+- [x] **Phase 4: Human-in-the-Loop** - Interrupt/resume cycle with SqliteSaver, revision loop capped at 3 (completed 2026-04-24)
 - [ ] **Phase 5: Storage and Export** - SQLite history writes and markdown file export
 - [ ] **Phase 6: Streamlit UI** - Full input-to-export UI wired to the working graph
 
@@ -118,6 +118,6 @@ Plans:
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
 | 3. Enrichment Tools | 3/3 | Complete   | 2026-04-23 |
-| 4. Human-in-the-Loop | 2/4 | In Progress|  |
+| 4. Human-in-the-Loop | 4/4 | Complete   | 2026-04-24 |
 | 5. Storage and Export | 0/TBD | Not started | - |
 | 6. Streamlit UI | 0/TBD | Not started | - |
