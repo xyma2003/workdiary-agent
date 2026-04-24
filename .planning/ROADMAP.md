@@ -82,7 +82,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Write RED test suite (9 tests covering all 5 HITL success criteria)
+- [x] 04-01-PLAN.md — Write RED test suite (9 tests covering all 5 HITL success criteria)
 - [ ] 04-02-PLAN.md — graph.py topology update: route_after_review, updated route_after_revise, SqliteSaver parameterization
 - [ ] 04-03-PLAN.md — Node implementations: review_node (interrupt), revise_node, polish_node (human_feedback), save_node (final_report)
 - [ ] 04-04-PLAN.md — Turn all tests GREEN + scripts/test_hitl_cycle.py + human verification checkpoint
@@ -118,6 +118,6 @@ Plans:
 | 1. Graph Skeleton | 3/3 | Complete   | 2026-04-23 |
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
 | 3. Enrichment Tools | 3/3 | Complete   | 2026-04-23 |
-| 4. Human-in-the-Loop | 0/TBD | Not started | - |
+| 4. Human-in-the-Loop | 1/4 | In Progress|  |
 | 5. Storage and Export | 0/TBD | Not started | - |
 | 6. Streamlit UI | 0/TBD | Not started | - |

@@ -17,10 +17,10 @@
 
 ### 人工确认与修改 (HITL)
 
-- [ ] **HITL-01**: 生成初稿后系统暂停，用户可查看完整日报内容
+- [x] **HITL-01**: 生成初稿后系统暂停，用户可查看完整日报内容
 - [ ] **HITL-02**: 用户可直接在文本框中编辑日报内容（inline 编辑，accept-with-edit 路径）
-- [ ] **HITL-03**: 用户可输入修改意见，Agent 根据反馈重新润色（最多循环3次）
-- [ ] **HITL-04**: 用户可一键接受当前版本，结束生成流程
+- [x] **HITL-03**: 用户可输入修改意见，Agent 根据反馈重新润色（最多循环3次）
+- [x] **HITL-04**: 用户可一键接受当前版本，结束生成流程
 
 ### 模板系统 (TMPL)
 
@@ -73,10 +73,10 @@
 | AGENT-05 | Phase 2 | Complete |
 | AGENT-06 | Phase 2 | Complete |
 | AGENT-07 | Phase 2 | Complete |
-| HITL-01 | Phase 4 | Pending |
+| HITL-01 | Phase 4 | Complete |
 | HITL-02 | Phase 4 | Pending |
-| HITL-03 | Phase 4 | Pending |
-| HITL-04 | Phase 4 | Pending |
+| HITL-03 | Phase 4 | Complete |
+| HITL-04 | Phase 4 | Complete |
 | TMPL-01 | Phase 2 | Complete |
 | TMPL-02 | Phase 2 | Complete |
 | TMPL-03 | Phase 2 | Complete |
