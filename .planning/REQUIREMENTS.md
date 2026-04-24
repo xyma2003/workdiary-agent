@@ -36,8 +36,8 @@
 
 ### UI 界面 (UI)
 
-- [ ] **UI-01**: Streamlit 界面包含输入区（工作描述、可选 Git 路径、可选数据粘贴/上传）
-- [ ] **UI-02**: 界面展示 Agent 当前处理节点状态（如"正在提取信息…"/"正在润色…"）
+- [x] **UI-01**: Streamlit 界面包含输入区（工作描述、可选 Git 路径、可选数据粘贴/上传）
+- [x] **UI-02**: 界面展示 Agent 当前处理节点状态（如"正在提取信息…"/"正在润色…"）
 - [ ] **UI-03**: 界面展示生成的日报内容，支持直接编辑
 - [ ] **UI-04**: 界面提供"接受"/"重新生成（附反馈）"/"导出"操作按钮
 - [ ] **UI-05**: 界面提供历史日报查看入口
@@ -83,8 +83,8 @@
 | STORE-01 | Phase 5 | Complete |
 | STORE-02 | Phase 5 | Complete |
 | STORE-03 | Phase 5 | Complete |
-| UI-01 | Phase 6 | Pending |
-| UI-02 | Phase 6 | Pending |
+| UI-01 | Phase 6 | Complete |
+| UI-02 | Phase 6 | Complete |
 | UI-03 | Phase 6 | Pending |
 | UI-04 | Phase 6 | Pending |
 | UI-05 | Phase 6 | Pending |

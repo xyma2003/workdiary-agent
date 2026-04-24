@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-04-24T03:46:13.611Z"
+stopped_at: Completed 06-streamlit-ui-01-PLAN.md
+last_updated: "2026-04-24T03:59:57.977Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 4
   total_plans: 17
-  completed_plans: 17
+  completed_plans: 18
   percent: 83
 ---
 
@@ -65,6 +65,7 @@ Progress: [████████░░] 83%
 | Phase 04-human-in-the-loop P04 | 15min | 2 tasks | 3 files |
 | Phase 05-storage-and-export P02 | 5 | 2 tasks | 3 files |
 | Phase 05 P03 | 5min | 2 tasks | 2 files |
+| Phase 06-streamlit-ui P01 | 2 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 05-storage-and-export]: Module-level constants DB_PATH and EXPORTS_DIR allow tests to monkeypatch without import tricks
 - [Phase 05]: save_node is the single write point for history.db — no other node touches it
 - [Phase 05]: Phase 4 HITL tests tolerate real history.db/exports/ writes during test_approve_path — no mock needed for integration coverage
+- [Phase 06-streamlit-ui]: Function definitions placed before routing call in app.py to avoid NameError at Python top-to-bottom execution
+- [Phase 06-streamlit-ui]: @st.cache_resource on get_graph() prevents sqlite3 connection re-open on every Streamlit rerun (SC-5)
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T03:46:13.608Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-streamlit-ui/06-CONTEXT.md
+Last session: 2026-04-24T03:59:57.975Z
+Stopped at: Completed 06-streamlit-ui-01-PLAN.md
+Resume file: None
