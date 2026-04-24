@@ -96,7 +96,12 @@ Plans:
   2. `storage/sqlite.py` queries return reports ordered by date descending — most recent report is first
   3. Calling the markdown export function produces a `.md` file named with the current date (e.g., `daily_report_2026-04-22.md`) containing the polished report
   4. history.db and graph_state.db are separate files — app code never writes to graph_state.db
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Write RED test suite for storage and export (TDD)
+- [ ] 05-02-PLAN.md — Create workdiary_agent/storage/ package (sqlite.py, export.py, __init__.py)
+- [ ] 05-03-PLAN.md — Upgrade save_node + full test GREEN + human verification checkpoint
 
 ### Phase 6: Streamlit UI
 **Goal**: A Streamlit app covers the full workflow — input, agent processing status, review with inline editing, accept/revise/export actions, and history browsing — wired to the working graph via session_state
