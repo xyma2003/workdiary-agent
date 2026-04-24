@@ -18,7 +18,7 @@
 ### 人工确认与修改 (HITL)
 
 - [x] **HITL-01**: 生成初稿后系统暂停，用户可查看完整日报内容
-- [ ] **HITL-02**: 用户可直接在文本框中编辑日报内容（inline 编辑，accept-with-edit 路径）
+- [x] **HITL-02**: 用户可直接在文本框中编辑日报内容（inline 编辑，accept-with-edit 路径）
 - [x] **HITL-03**: 用户可输入修改意见，Agent 根据反馈重新润色（最多循环3次）
 - [x] **HITL-04**: 用户可一键接受当前版本，结束生成流程
 
@@ -38,8 +38,8 @@
 
 - [x] **UI-01**: Streamlit 界面包含输入区（工作描述、可选 Git 路径、可选数据粘贴/上传）
 - [x] **UI-02**: 界面展示 Agent 当前处理节点状态（如"正在提取信息…"/"正在润色…"）
-- [ ] **UI-03**: 界面展示生成的日报内容，支持直接编辑
-- [ ] **UI-04**: 界面提供"接受"/"重新生成（附反馈）"/"导出"操作按钮
+- [x] **UI-03**: 界面展示生成的日报内容，支持直接编辑
+- [x] **UI-04**: 界面提供"接受"/"重新生成（附反馈）"/"导出"操作按钮
 - [ ] **UI-05**: 界面提供历史日报查看入口
 
 ## v2 Requirements
@@ -74,7 +74,7 @@
 | AGENT-06 | Phase 2 | Complete |
 | AGENT-07 | Phase 2 | Complete |
 | HITL-01 | Phase 4 | Complete |
-| HITL-02 | Phase 4 | Pending |
+| HITL-02 | Phase 4 | Complete |
 | HITL-03 | Phase 4 | Complete |
 | HITL-04 | Phase 4 | Complete |
 | TMPL-01 | Phase 2 | Complete |
@@ -85,8 +85,8 @@
 | STORE-03 | Phase 5 | Complete |
 | UI-01 | Phase 6 | Complete |
 | UI-02 | Phase 6 | Complete |
-| UI-03 | Phase 6 | Pending |
-| UI-04 | Phase 6 | Pending |
+| UI-03 | Phase 6 | Complete |
+| UI-04 | Phase 6 | Complete |
 | UI-05 | Phase 6 | Pending |
 
 **Coverage:**
