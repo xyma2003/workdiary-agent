@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-04-PLAN.md — Phase 4 fully complete (all 5 SC human-approved, 26/26 tests GREEN)
-last_updated: "2026-04-24T03:26:30.455Z"
-last_activity: 2026-04-24 -- Phase 05 execution started
+stopped_at: Completed 05-02-PLAN.md — storage package with 7/7 tests GREEN
+last_updated: "2026-04-24T03:34:11.067Z"
+last_activity: 2026-04-24
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 17
-  completed_plans: 14
+  completed_phases: 3
+  total_plans: 14
+  completed_plans: 16
   percent: 0
 ---
 
@@ -26,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 05 (storage-and-export) — EXECUTING
-Plan: 1 of 3
+Plan: 2 of 3
 Next: Phase 05 (Storage and Export)
-Status: Executing Phase 05
-Last activity: 2026-04-24 -- Phase 05 execution started
+Status: Ready to execute
+Last activity: 2026-04-24
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -63,6 +63,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03-enrichment-tools P03 | 10min | 2 tasks | 1 files |
 | Phase 04-human-in-the-loop P03 | 8min | 2 tasks | 4 files |
 | Phase 04-human-in-the-loop P04 | 15min | 2 tasks | 3 files |
+| Phase 05-storage-and-export P02 | 5 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 04-human-in-the-loop]: polish_node appends feedback suffix only when human_feedback is truthy — backward-compatible with Phase 2/3 (D-10, D-11)
 - [Phase 04-human-in-the-loop]: LangGraph state serialization: with_structured_output().invoke() must return real Pydantic model (StructuredInfo), not MagicMock — InMemorySaver ormsgpack cannot serialize MagicMock
 - [Phase 04-human-in-the-loop]: Test mocking pattern for multi-node graphs: all LLM-calling nodes (extract, draft, polish, enrich, route_template) must be patched via _make_llm or classify method — missing any one causes real API calls
+- [Phase 05-storage-and-export]: DB_PATH = 'history.db' (never 'graph_state.db') — app-owned history DB is separate from LangGraph checkpointer DB
+- [Phase 05-storage-and-export]: Module-level constants DB_PATH and EXPORTS_DIR allow tests to monkeypatch without import tricks
 
 ### Pending Todos
 
@@ -106,6 +109,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T04:00:00.000Z
-Stopped at: Completed 04-04-PLAN.md — Phase 4 fully complete (all 5 SC human-approved, 26/26 tests GREEN)
+Last session: 2026-04-24T03:34:11.065Z
+Stopped at: Completed 05-02-PLAN.md — storage package with 7/7 tests GREEN
 Resume file: None

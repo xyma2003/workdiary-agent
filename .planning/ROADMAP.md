@@ -100,7 +100,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — Write RED test suite for storage and export (TDD)
-- [ ] 05-02-PLAN.md — Create workdiary_agent/storage/ package (sqlite.py, export.py, __init__.py)
+- [x] 05-02-PLAN.md — Create workdiary_agent/storage/ package (sqlite.py, export.py, __init__.py)
 - [ ] 05-03-PLAN.md — Upgrade save_node + full test GREEN + human verification checkpoint
 
 ### Phase 6: Streamlit UI
@@ -124,5 +124,5 @@ Plans:
 | 2. Core LLM Nodes and Template Routing | 4/4 | Complete    | 2026-04-23 |
 | 3. Enrichment Tools | 3/3 | Complete   | 2026-04-23 |
 | 4. Human-in-the-Loop | 4/4 | Complete   | 2026-04-24 |
-| 5. Storage and Export | 0/TBD | Not started | - |
+| 5. Storage and Export | 2/3 | In Progress|  |
 | 6. Streamlit UI | 0/TBD | Not started | - |
