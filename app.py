@@ -251,9 +251,43 @@ def _render_review_ui():
 
 
 def _render_history_page():
-    """Placeholder — implemented in Plan 06-03."""
+    """History view: shows all past reports ordered by date DESC (D-20, D-21)."""
     st.title("历史记录")
-    st.info("加载中...")
+
+    col_refresh, _ = st.columns([1, 5])
+    with col_refresh:
+        if st.button("刷新", key="history_refresh_btn"):
+            st.rerun()
+
+    try:
+        reports = get_all_reports()   # Returns list[dict], date DESC (D-20)
+    except Exception as e:
+        st.error(f"无法加载历史记录: {e}")
+        return
+
+    if not reports:
+        st.info("暂无历史记录。生成并接受一篇日报后，记录将出现在这里。")
+        return
+
+    st.markdown(f"共 **{len(reports)}** 条记录")
+
+    for r in reports:
+        # D-21: st.expander labeled with date and template_type
+        label = f"{r['date']} — {r.get('template_type', '未知模板')}"
+        with st.expander(label, expanded=False):
+            st.caption(f"创建时间: {r.get('created_at', '')}")
+            st.markdown("**原始输入:**")
+            st.text(r.get("raw_input", ""))
+            st.markdown("**日报内容:**")
+            st.markdown(r.get("polished", ""))
+            # Inline export from history
+            st.download_button(
+                label="⬇ 导出此记录",
+                data=r.get("polished", ""),
+                file_name=f"daily_report_{r['date']}.md",
+                mime="text/markdown",
+                key=f"hist_export_{r['id']}",
+            )
 
 
 # ---------------------------------------------------------------------------
