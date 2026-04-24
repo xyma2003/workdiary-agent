@@ -39,10 +39,10 @@ def _make_llm_mock(return_text: str = "polished draft") -> MagicMock:
 def _mock_all_llm_nodes():
     """Context manager stack mocking all LLM-calling nodes to avoid API calls."""
     return [
-        patch("workdiary_agent.nodes.extract._make_llm", return_value=_make_llm_mock()),
-        patch("workdiary_agent.nodes.draft._make_llm", return_value=_make_llm_mock("【已选用混合型模板】\n日报初稿内容")),
-        patch("workdiary_agent.nodes.polish._make_llm", return_value=_make_llm_mock("polished content")),
-        patch("workdiary_agent.nodes.enrich._make_llm", return_value=_make_llm_mock()),
+        patch("workdiary_agent.nodes.extract.make_llm", return_value=_make_llm_mock()),
+        patch("workdiary_agent.nodes.draft.make_llm", return_value=_make_llm_mock("【已选用混合型模板】\n日报初稿内容")),
+        patch("workdiary_agent.nodes.polish.make_llm", return_value=_make_llm_mock("polished content")),
+        patch("workdiary_agent.nodes.enrich.make_llm", return_value=_make_llm_mock()),
         patch("workdiary_agent.nodes.route_template.TemplateRouterAgent.classify",
               return_value="混合型"),
     ]

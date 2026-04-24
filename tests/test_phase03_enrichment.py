@@ -35,7 +35,8 @@ def test_enrich_valid_repo_produces_git_log():
     mock_repo = MagicMock()
     mock_repo.iter_commits.return_value = fake_commits
 
-    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo):
+    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+         patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
         state: AgentState = {"repo_path": "/fake/repo"}
         result = enrich_node(state)
 
@@ -79,7 +80,7 @@ def test_enrich_with_data_input_produces_summary():
     mock_response.content = "关键指标：转化率15%，GMV环比增长20%，响应时间从200ms降到45ms"
     mock_llm.invoke.return_value = mock_response
 
-    with patch("workdiary_agent.nodes.enrich._make_llm", return_value=mock_llm):
+    with patch("workdiary_agent.nodes.enrich.make_llm", return_value=mock_llm):
         state: AgentState = {
             "data_input": "转化率15%，GMV增长20%，响应时间从200ms降到45ms"
         }
@@ -95,7 +96,7 @@ def test_enrich_empty_data_input_skips_llm():
     """SC-3 variant: Missing/empty data_input → data_summary=None, LLM NOT called."""
     mock_llm = MagicMock()
 
-    with patch("workdiary_agent.nodes.enrich._make_llm", return_value=mock_llm):
+    with patch("workdiary_agent.nodes.enrich.make_llm", return_value=mock_llm):
         # No data_input key at all
         result_no_key = enrich_node({})
         # Empty string data_input
@@ -119,7 +120,7 @@ def test_draft_node_includes_git_log_in_context():
     mock_response.content = "【已选用技术型模板】\n任务：缓存优化\nabc1234 feat: add login module"
     mock_llm.invoke.return_value = mock_response
 
-    with patch("workdiary_agent.nodes.draft._make_llm", return_value=mock_llm):
+    with patch("workdiary_agent.nodes.draft.make_llm", return_value=mock_llm):
         state: AgentState = {
             "raw_input": "今天完成了缓存优化",
             "template_type": "技术型",
@@ -151,7 +152,7 @@ def test_draft_node_includes_data_summary_in_context():
     mock_response.content = "【已选用业务型模板】\n结论：转化率提升\n数据：15%"
     mock_llm.invoke.return_value = mock_response
 
-    with patch("workdiary_agent.nodes.draft._make_llm", return_value=mock_llm):
+    with patch("workdiary_agent.nodes.draft.make_llm", return_value=mock_llm):
         state: AgentState = {
             "raw_input": "今天优化了转化漏斗",
             "template_type": "业务型",
