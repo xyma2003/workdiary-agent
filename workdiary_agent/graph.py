@@ -14,9 +14,11 @@ Phase evolution:
 from __future__ import annotations
 
 from typing import Literal
+import sqlite3
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .state import AgentState
 from .nodes import (
@@ -32,28 +34,49 @@ from .nodes import (
 
 
 # ---------------------------------------------------------------------------
-# Conditional edge routing function
+# Conditional edge routing functions
 # ---------------------------------------------------------------------------
 
-def route_after_revise(state: AgentState) -> Literal["review", "save"]:
-    """Routes to 'review' for another revision pass, or 'save' when limit is reached.
+def route_after_review(state: AgentState) -> Literal["save", "revise"]:
+    """Routes from review node based on human_decision written by review_node.
 
-    Uses state.get() — NOT state[] — because AgentState uses total=False and
-    revision_count may be unset on the first invocation. Unset defaults to 0.
+    Returns 'save' if decision is 'approve' (or missing), 'revise' otherwise.
+    D-05: approve → save, revise → revise_node.
+    """
+    decision = state.get("human_decision", "approve")
+    return "save" if decision == "approve" else "revise"
+
+
+def route_after_revise(state: AgentState) -> Literal["polish", "save"]:
+    """Routes to 'polish' for another revision pass, or 'save' when limit reached.
+
+    UPDATED for Phase 4 (D-06+D-07): returns 'polish'|'save' (was 'review'|'save').
+    Guard LOGIC unchanged: count >= 3 → save. Destination renamed because the
+    revise→polish→review loop replaces the old revise→review loop.
+    Uses state.get() — NOT state[] — because AgentState total=False.
     """
     count = state.get("revision_count", 0)
-    return "save" if count >= 3 else "review"
+    return "save" if count >= 3 else "polish"
 
 
 # ---------------------------------------------------------------------------
 # Graph factory
 # ---------------------------------------------------------------------------
 
-def build_graph():
+def build_graph(use_sqlite: bool = False):
     """Build and compile the WorkDiary Agent StateGraph.
 
-    Returns a compiled graph ready for graph.invoke() calls.
-    Always pass config={"configurable": {"thread_id": "..."}} — required by InMemorySaver.
+    Args:
+        use_sqlite: If True, use SqliteSaver with graph_state.db for persistent
+                    checkpointing. If False (default), use InMemorySaver — no disk
+                    writes, suitable for unit tests. Production and scripts/test_hitl_cycle.py
+                    should pass use_sqlite=True. Unit tests use the default False.
+
+    IMPORTANT — SqliteSaver pattern (D-12/D-13):
+        Use sqlite3.connect() + SqliteSaver(conn) directly.
+        Do NOT use SqliteSaver.from_conn_string() without a 'with' block —
+        that returns a _GeneratorContextManager, not a SqliteSaver,
+        causing TypeError at builder.compile().
     """
     builder = StateGraph(AgentState)
 
@@ -67,7 +90,7 @@ def build_graph():
     builder.add_node("revise", revise_node)
     builder.add_node("save", save_node)
 
-    # --- Linear edges (Phase 1 topology) ---
+    # --- Linear edges ---
     builder.add_edge(START, "extract")
     builder.add_edge("extract", "enrich")
     builder.add_edge("enrich", "route_template")
@@ -75,26 +98,34 @@ def build_graph():
     builder.add_edge("draft", "polish")
     builder.add_edge("polish", "review")
 
-    # Phase 1: direct edge review→revise (Phase 4 replaces review node body with interrupt())
-    builder.add_edge("review", "revise")
+    # D-04: deleted builder.add_edge("review", "revise")  — Phase 1 direct edge removed
 
-    # --- Conditional edge: revise loops back to review until revision_count >= 3 ---
+    # D-05: conditional edge from review (approve→save, revise→revise_node)
+    builder.add_conditional_edges(
+        "review",
+        route_after_review,
+        {"save": "save", "revise": "revise"},
+    )
+
+    # D-06+D-07: single conditional edge — no separate add_edge("revise","polish") needed.
+    # The guard logic (count>=3→save) is unchanged; destination "review" renamed to "polish".
     builder.add_conditional_edges(
         "revise",
         route_after_revise,
-        {
-            "review": "review",
-            "save": "save",
-        },
+        {"polish": "polish", "save": "save"},
     )
 
     builder.add_edge("save", END)
 
     # --- Compile with checkpointer ---
-    # InMemorySaver is canonical (MemorySaver is a backwards-compat alias at line 530).
-    # Checkpointer is required from Phase 1: Phase 4's interrupt() needs it.
-    # Phase 4 swap: replace InMemorySaver() with SqliteSaver.from_conn_string("graph_state.db")
-    checkpointer = InMemorySaver()
+    if use_sqlite:
+        # Direct connection pattern — avoids from_conn_string() context manager issue.
+        # from_conn_string() is a @contextmanager; without 'with' it returns
+        # _GeneratorContextManager which fails at builder.compile(). (Pitfall 3)
+        conn = sqlite3.connect("graph_state.db", check_same_thread=False)
+        checkpointer = SqliteSaver(conn)
+    else:
+        checkpointer = InMemorySaver()
     return builder.compile(checkpointer=checkpointer)
 
 
