@@ -61,16 +61,26 @@ _POLISH_SYSTEM = """你是一位资深职场写作顾问，专门从老板视角
 def polish_node(state: AgentState) -> dict:
     """Refine draft with boss-perspective polish (AGENT-07).
 
-    Reads state["draft"] and returns {"polished": improved_text}.
-    Uses goal-completion verbs and inserts quantification placeholder if needed (D-09, D-10).
+    Phase 4 extension (D-10): if human_feedback is present in state (set by
+    review_node after a revise decision), append the feedback to the HumanMessage
+    content so the LLM polishes with the user's specific guidance.
+
+    D-11: when human_feedback is absent or empty, behaviour is unchanged from
+    Phase 2/3 (backward-compatible with non-HITL invocations).
     """
     draft = state.get("draft", "")
     if not draft or draft == "[stub draft]":
         return {"polished": draft or ""}
 
     llm = _make_llm()
+    content = f"请润色以下日报初稿：\n\n{draft}"
+    human_feedback = state.get("human_feedback")
+    if human_feedback:  # D-10: non-empty feedback appended
+        content += f"\n\n请根据以下意见修改：{human_feedback}"
+    # D-11: empty/None human_feedback → no append, LLM call unchanged
+
     response = llm.invoke([
         SystemMessage(content=_POLISH_SYSTEM),
-        HumanMessage(content=f"请润色以下日报初稿：\n\n{draft}"),
+        HumanMessage(content=content),
     ])
     return {"polished": response.content}
