@@ -1,21 +1,35 @@
 # workdiary_agent/nodes/save.py
 """
-Save node: lightweight Phase 4 upgrade.
+Save node: persists completed report to history.db and exports markdown.
 
-D-15: returns final_report = state.get("polished", "").
-Phase 5 will add SQLite history write and markdown export — this node is the
-correct place for that. For Phase 4, the only job is to make final_report
-available in the graph result so the HITL approval cycle can be verified.
+D-04: calls storage.save_report(state) to write to history.db
+D-05: calls storage.save_markdown(polished, date) to write markdown file
+D-07: sets export_path in returned state dict for Phase 6 UI
 
-Note: history.db (Phase 5) and graph_state.db (LangGraph checkpointer) are
-SEPARATE files. This node never touches graph_state.db.
+IMPORTANT: history.db (this node) and graph_state.db (LangGraph SqliteSaver)
+are SEPARATE files. This node NEVER touches graph_state.db.
 """
+import datetime
 from ..state import AgentState
+from ..storage import save_report, save_markdown
 
 
 def save_node(state: AgentState) -> dict:
-    """Write final_report from polished content. Phase 5 adds history.db write."""
+    """Persist final report to history.db and export as markdown.
+
+    Returns updated state fields: final_report and export_path.
+    """
+    polished = state.get("polished", "") or ""
+    today = datetime.date.today().isoformat()
+
+    # D-04: write to history.db (never graph_state.db)
+    save_report(state)
+
+    # D-05, D-06: write exports/daily_report_{YYYY-MM-DD}.md
+    export_path = save_markdown(polished, today)
+
+    # D-07: export_path available to Phase 6 Streamlit UI
     return {
-        "final_report": state.get("polished", ""),
-        "export_path": None,  # Phase 5 sets this
+        "final_report": polished,
+        "export_path": export_path,
     }
