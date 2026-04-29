@@ -655,6 +655,897 @@ for template_type in ["技术型", "业务型", "混合型"]:
 
 ---
 
+## Q11：用户第二次点「重新生成」时，第一次的 human_feedback 还在 state 里吗？会影响第二次的 polish 吗？
+
+*（也可能被问成：多轮 revise 循环中，feedback 是累积的还是覆盖的？）*
+
+### 面试官想听到的
+考查点：**多轮状态管理的细节**，能否追踪 human_feedback 在循环中的生命周期，以及 LangGraph 的状态更新语义。
+
+### 代码中的实际方案
+
+**状态更新是 merge，不是替换**
+
+LangGraph 节点返回的 dict 是**部分更新**，只更新返回的字段，不清空其他字段。
+
+`review_node`（`workdiary_agent/nodes/review.py:42`）：
+```python
+return {"human_decision": decision, "human_feedback": feedback}
+```
+
+第一次 revise：`human_feedback = "请加强量化指标"`，写入 state。
+
+Polish 节点读取并用掉这个 feedback，生成新的 `polished`。
+
+第二次 review 暂停，用户输入新 feedback `"语气太正式，改得自然一点"`，调用：
+```python
+Command(resume={"decision": "revise", "feedback": "语气太正式，改得自然一点"})
+```
+
+review_node 返回 `{"human_decision": "revise", "human_feedback": "语气太正式，改得自然一点"}`，**覆盖**了第一次的 feedback。
+
+**所以：feedback 是覆盖，不是累积。**
+
+`polish_node`（`workdiary_agent/nodes/polish.py:54-56`）每次只读当前 state 中的 `human_feedback`，不会看到历史的 feedback。
+
+### 这个设计的隐患
+
+**场景**：用户第一次说"加量化指标"，第二次说"语气自然一点"。第二次 polish 时，第一次的"加量化指标"这个需求就被覆盖了，LLM 可能不再关注量化指标。
+
+**代码中没有处理这个问题**。
+
+### 理想方案
+
+两个选项：
+
+**选项一：累积 feedback（追加而非覆盖）**
+```python
+# review_node 中
+existing_feedback = state.get("human_feedback", "")
+new_feedback = response.get("feedback", "")
+combined = f"{existing_feedback}\n{new_feedback}".strip() if existing_feedback else new_feedback
+return {"human_decision": decision, "human_feedback": combined}
+```
+
+**选项二：在 polish 的 HumanMessage 里注入 feedback 历史**
+```python
+# polish_node 中
+feedback_history = state.get("feedback_history", [])  # 新增字段
+if human_feedback:
+    context = f"历史修改意见：\n" + "\n".join(f"- {f}" for f in feedback_history)
+    context += f"\n本次修改意见：{human_feedback}"
+```
+
+当前实现选了最简单的方案（覆盖），对大多数场景够用，但面试时要主动说出这个 trade-off。
+
+### 如何对面试官表述
+> "LangGraph 的状态更新是 merge 语义，节点返回的 dict 只更新对应字段，不清空其他字段。但 review_node 每次都写 human_feedback 字段，所以是覆盖而不是累积。第二次 revise 时，第一次的 feedback 就丢了。
+>
+> 这个设计对大多数场景够用——用户通常每次只关注一个问题。但如果用户的两次 feedback 是正交的需求，第二次 polish 可能忽略第一次的要求。改进方案是把 feedback 改成列表字段累积，或者在 polish 的 prompt 里注入所有历史 feedback。"
+
+### 亮点
+- 说清楚了 LangGraph 状态更新的 merge 语义，不只是说"会覆盖"
+- 主动识别多轮场景下的信息丢失问题
+
+### 瓶颈
+- 累积 feedback 会让 prompt 越来越长，多轮后可能超过 token 限制
+- 用户可能不希望历史 feedback 影响当前这次——覆盖有时反而是正确的
+
+### 突出的能力
+**LangGraph 状态语义的深度理解** + **多轮对话中的信息保持设计**
+
+---
+
+**追问：用户 inline 编辑了日报内容后点「重新生成」，编辑会丢失吗？**
+
+**会丢失，这是一个设计缺陷。**
+
+`app.py:207-208`：
+```python
+if st.button("↻ 重新生成", use_container_width=True, key="revise_btn"):
+    st.session_state._show_feedback = True
+    # 注意：没有保存 session_state["edit_area"] 的内容
+```
+
+用户在 `edit_area` 里做的修改存在 `session_state["edit_area"]`，但点「重新生成」时没有把它存起来。`Command(resume={"decision": "revise", ...})` 之后图重新跑 polish，返回全新的 `polished`，覆盖掉 `session_state.result["polished"]`，用户的编辑就丢失了。
+
+**修复方案**：在点「重新生成」时，把 `edit_area` 的内容作为额外的 feedback 传进去：
+```python
+if st.button("↻ 重新生成"):
+    edited = st.session_state.get("edit_area", "")
+    original = result.get("polished", "")
+    if edited != original:
+        # 用户有编辑，把编辑内容作为 feedback 的一部分
+        st.session_state._pending_edit = edited
+    st.session_state._show_feedback = True
+```
+
+---
+
+## Q12：`st.status` 里的节点标签是在图执行前就全部写出来的，这意味着什么？
+
+*（也可能被问成：用户看到的进度标签是实时的吗？如果某个节点失败了，标签会显示错误吗？）*
+
+### 面试官想听到的
+考查点：**Streamlit 执行模型的理解**，以及流式 UI vs 批量 UI 的设计权衡。
+
+### 代码中的实际方案
+
+`app.py:110-114`：
+```python
+with st.status("正在生成日报...", expanded=True) as status_ui:
+    for label in NODE_LABELS.values():
+        st.write(label)           # ← 在 invoke() 之前把所有标签全写出来
+
+    try:
+        result = get_graph().invoke(...)   # ← 阻塞调用，图在这里执行
+```
+
+**这意味着**：所有节点标签（"正在提取信息..."、"正在润色..."等）在图开始执行之前就已经渲染完了。用户看到的是一个静态的标签列表，不是节点逐一完成时的实时更新。
+
+**视觉效果**：用户点击「生成日报」后，立刻看到所有标签同时出现，然后等待图执行完成。这不是真正的进度条，而是"预告"。
+
+**为什么这样设计**：`graph.invoke()` 是同步阻塞调用，执行期间 Streamlit 无法更新 UI（Python 单线程）。要做真正的实时进度更新，需要用 `graph.stream()` + `st.empty()` 的异步模式。
+
+### 理想方案（真正的实时进度）
+
+```python
+with st.status("正在生成日报...", expanded=True) as status_ui:
+    progress_placeholder = st.empty()
+
+    for chunk in get_graph().stream({"raw_input": raw_input, ...}, config):
+        # chunk 是 {节点名: 节点输出} 的字典
+        node_name = list(chunk.keys())[0]
+        label = NODE_LABELS.get(node_name, f"正在执行 {node_name}...")
+        progress_placeholder.write(f"✓ {label}")
+
+    status_ui.update(label="生成完成", state="complete")
+```
+
+`graph.stream()` 每个节点完成时 yield 一个 chunk，可以实现真正的逐节点进度更新。
+
+**但 stream() 和 interrupt() 的配合有坑**：stream() 在遇到 interrupt 时会 yield 一个包含 `__interrupt__` 键的 chunk，然后停止。需要特殊处理这个 chunk 来检测暂停状态。
+
+### 如何对面试官表述
+> "当前的进度标签是在 invoke() 之前一次性全写出来的，不是实时更新的。因为 invoke() 是阻塞调用，执行期间 Streamlit 无法更新 UI。用户看到的是'预告'，不是真正的进度条。
+>
+> 要做真正的实时进度，需要换成 graph.stream()，每个节点完成时 yield 一个 chunk，再用 st.empty() 逐步更新。但 stream() 和 interrupt() 配合有额外的处理逻辑，复杂度更高，当前 scope 内没做。"
+
+### 亮点
+- 说清楚了"假进度条"的本质，而不是假装它是实时的
+- 知道 stream() 的存在和使用场景
+
+### 瓶颈
+- 图执行期间（10-30秒）UI 完全冻结，用户体验差
+- 没有超时机制，如果 LLM API 不响应，用户会一直等待
+
+### 突出的能力
+**Streamlit 执行模型的深度理解** + **流式 UI 的设计意识**
+
+---
+
+## Q13：git log 读取的时间范围是"今天"，但代码里 `datetime.min.time()` 是什么？有时区问题吗？
+
+*（也可能被问成：如果服务器在 UTC，用户在中国，git log 会读到哪一天的 commits？）*
+
+### 面试官想听到的
+考查点：**时区处理的细节意识**，这是分布式系统和 AI 应用中的经典坑。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/enrich.py:55-56`：
+```python
+today = datetime.combine(date.today(), datetime.min.time())
+commits = list(repo.iter_commits(since=today.isoformat()))
+```
+
+**`datetime.min.time()` 是 `time(0, 0, 0)`**，即当天的 00:00:00。
+
+**`today.isoformat()` 生成的字符串**：`"2026-04-28T00:00:00"`，**不含时区信息**。
+
+**问题**：
+- `date.today()` 返回的是**运行进程的本地时区**的日期
+- `isoformat()` 生成的字符串不含时区，git 会用**系统时区**解释它
+- 如果服务器在 UTC（0时区），用户在中国（UTC+8），`date.today()` 是 UTC 的今天
+- 中国用户在 UTC+8 的 09:00 产生的 commit，对应 UTC 的 01:00，在 UTC 的"今天"里
+- 但中国用户在 UTC+8 的 00:30（即 UTC 的前一天 16:30）产生的 commit，会被错误地排除
+
+**实际影响**：在本地开发（服务器和用户同时区）时不会有问题。在云部署（服务器 UTC，用户 UTC+8）时，每天最早的 8 小时内的 commits 可能被错误读取或遗漏。
+
+### 理想方案
+
+```python
+from datetime import datetime, date, timezone, timedelta
+
+# 方案1：使用 UTC，让 git 统一用 UTC 解释
+today_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+commits = list(repo.iter_commits(since=today_utc.isoformat()))
+
+# 方案2：让用户指定时区（更精确）
+user_tz = timezone(timedelta(hours=8))  # 从配置读取
+today_local = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+commits = list(repo.iter_commits(since=today_local.isoformat()))
+```
+
+### 如何对面试官表述
+> "datetime.min.time() 是 time(0,0,0)，就是当天的零点。isoformat() 生成不含时区的字符串，git 用系统时区解释。
+>
+> 问题在于：如果服务器在 UTC，用户在中国 UTC+8，中国用户在凌晨 00:30 产生的 commit 对应 UTC 前一天 16:30，会被排除在'今天'之外。这是个真实的 bug，在本地开发时不会暴露，部署到云端才会出现。修复方案是用 timezone-aware 的 datetime，或者从配置读取用户时区。"
+
+### 亮点
+- 说清楚了 `datetime.min.time()` 的含义，不是模糊带过
+- 给出了具体的 bug 复现场景（服务器 UTC + 用户 UTC+8 的边界情况）
+
+### 瓶颈
+- 即使修复了时区问题，"今天"的定义仍然取决于用户的时区设置，需要用户配置
+- git 的 `--since` 参数的行为在不同版本可能有细微差异
+
+### 突出的能力
+**时区处理的细节意识** + **本地开发 vs 云部署的差异认知**
+
+---
+
+## Q14：`final_report` 和 `polished` 两个字段都存在，有什么区别？为什么不直接用一个？
+
+*（也可能被问成：save_node 为什么要把 polished 复制到 final_report？）*
+
+### 面试官想听到的
+考查点：**状态字段设计的意图**，以及对 inline edit 场景下数据一致性的理解。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/save.py:22, 32-34`：
+```python
+polished = state.get("polished", "") or ""
+# ...
+return {
+    "final_report": polished,   # ← 复制
+    "export_path": export_path,
+}
+```
+
+`app.py:193-197`（inline edit 场景）：
+```python
+current_text = st.session_state.get("edit_area", polished)
+if current_text != polished:
+    st.session_state.result = dict(r)
+    st.session_state.result["polished"] = current_text  # ← 覆盖 polished
+else:
+    st.session_state.result = dict(r)
+```
+
+**关键问题**：用户 inline 编辑后点「接受」时，代码修改的是 `session_state.result["polished"]`，但 `graph.invoke(Command(resume={"decision": "approve"}))` 触发的 `save_node` 用的是图内部 state 的 `polished`，不是 session_state 里的修改版本。
+
+**所以**：`history.db` 里存的是**原始 polish 节点的输出**，不是用户编辑后的版本。`st.download_button` 导出的是编辑后的版本（`app.py:248`），但数据库里的是原版。
+
+这是一个**数据不一致 bug**：用户编辑了内容并接受，但数据库里存的不是他们接受的版本。
+
+### 理想方案
+
+在 Streamlit 层，`approve` 时把编辑后的内容传回图：
+```python
+# 方案：通过 feedback 传递编辑内容
+current_text = st.session_state.get("edit_area", polished)
+if current_text != polished:
+    # 把编辑后的内容通过 feedback 传回，让 save_node 用编辑版本
+    r = get_graph().invoke(
+        Command(resume={"decision": "approve", "feedback": "", "edited_content": current_text}),
+        config,
+    )
+```
+或者在 `save_node` 里优先读 `edited_content` 字段。
+
+### 如何对面试官表述
+> "final_report 是 save_node 的输出，polished 是 polish 节点的输出，save_node 把 polished 复制到 final_report 作为最终锁定版本。
+>
+> 但这里有个 bug：用户 inline 编辑后点接受，编辑内容只存在 session_state 里，没有传回图。save_node 用的还是图内部的 polished，所以 history.db 里存的是原始版本，不是用户编辑后的版本。导出的文件是编辑版，数据库里是原版，两个不一致。"
+
+### 亮点
+- 发现了 inline edit 场景下的数据不一致 bug
+- 能追踪数据从 session_state 到 graph state 再到 history.db 的完整路径
+
+### 瓶颈
+- 修复这个 bug 需要改变 Command(resume=...) 的接口，或者在 save_node 里增加对 edited_content 的支持
+
+### 突出的能力
+**跨层数据一致性的追踪能力** + **HITL 流程中 UI 与图状态同步的深度理解**
+
+---
+
+## Q15：`add_conditional_edges` 的第三个参数是什么？如果路由函数返回了映射里不存在的值会怎样？
+
+*（也可能被问成：conditional edge 的 mapping 参数有什么用？能不能省略？）*
+
+### 面试官想听到的
+考查点：**LangGraph API 的细节理解**，以及图拓扑设计的防御性思维。
+
+### 代码中的实际方案
+
+`workdiary_agent/graph.py:104-108`：
+```python
+builder.add_conditional_edges(
+    "review",
+    route_after_review,
+    {"save": "save", "revise": "revise"},   # ← 第三个参数
+)
+```
+
+**第三个参数是路由函数返回值到节点名的映射字典**。
+
+`route_after_review` 返回字符串 `"save"` 或 `"revise"`，映射字典把这些字符串对应到图中的节点名称。
+
+**为什么需要这个映射**：路由函数的"语言"（返回值）可以和图的节点名称解耦。比如路由函数可以返回 `"approve"` 和 `"reject"`，而图里的节点叫 `"save"` 和 `"revise"`，通过映射连接。
+
+**如果路由函数返回了映射里不存在的值**：LangGraph 会抛出 `InvalidUpdateError` 或类似的运行时错误，图执行中断。
+
+**代码中的防御**（`workdiary_agent/router/agent.py:66-68`）：
+```python
+valid_types = {"技术型", "业务型", "混合型"}
+template_type = raw_type if raw_type in valid_types else "混合型"  # 归一化
+```
+TemplateRouterAgent 的 `decide_template_node` 在写入状态前做了归一化，防止无效值进入路由。
+
+**但 `route_after_review` 没有这样的防御**：
+```python
+def route_after_review(state: AgentState) -> Literal["save", "revise"]:
+    decision = state.get("human_decision", "approve")
+    return "save" if decision == "approve" else "revise"
+```
+任何非 `"approve"` 的 decision 都会路由到 `"revise"`，包括 None、空字符串、非法值。这实际上是一种隐式的 fallback，但不够明确。
+
+### 如何对面试官表述
+> "第三个参数是映射字典，把路由函数的返回值映射到图中的节点名称。这允许路由逻辑和图拓扑解耦——路由函数说'approve'，图里的节点叫'save'，通过映射连接。
+>
+> 如果路由函数返回了映射里不存在的值，LangGraph 会在运行时报错。代码里 route_after_review 用了 else 兜底——任何非 approve 的值都路由到 revise，这是一个隐式的 fallback，能防止崩溃，但不够明确。更好的做法是显式处理所有可能的值，对非法输入记录日志或抛出明确的错误。"
+
+### 亮点
+- 说清楚了映射参数的解耦作用，不只是说"把返回值映射到节点"
+- 发现了 `else` 兜底的隐式 fallback，并评价了它的优劣
+
+### 瓶颈
+- 第三个参数省略时，LangGraph 会尝试直接用路由函数的返回值作为节点名，更容易出错
+
+### 突出的能力
+**LangGraph API 细节理解** + **防御性编程意识**
+
+---
+
+## Q16：如果要加第 4 种模板（比如"总结型"），代码需要改哪些地方？哪些不需要改？
+
+*（也可能被问成：你的模板系统扩展性如何？）*
+
+### 面试官想听到的
+考查点：**代码的松耦合设计**，能否快速定位扩展点，区分需要改和不需要改的部分。
+
+### 代码中的实际方案
+
+**需要改的（4处）**：
+
+1. **`workdiary_agent/nodes/draft.py`**：添加新的 system prompt 字符串，加入 `_TEMPLATE_PROMPTS` 字典
+```python
+_SUMMARY_SYSTEM = """你是一个总结型日报撰写助手..."""
+_TEMPLATE_PROMPTS = {
+    "技术型": _TECH_SYSTEM,
+    "业务型": _BIZ_SYSTEM,
+    "混合型": _MIXED_SYSTEM,
+    "总结型": _SUMMARY_SYSTEM,   # ← 新增
+}
+```
+
+2. **`workdiary_agent/router/agent.py`**：更新 `decide_template_node` 的 system prompt，告诉 LLM 新增了"总结型"，以及它的判断标准；更新归一化集合 `valid_types`
+```python
+valid_types = {"技术型", "业务型", "混合型", "总结型"}
+```
+
+3. **`workdiary_agent/nodes/route_template.py`**：更新用户覆盖的校验集合
+```python
+if state.get("template_type") in {"技术型", "业务型", "混合型", "总结型"}:
+```
+
+4. **测试文件**：添加新模板的测试用例
+
+**不需要改的（大多数代码）**：
+
+- `workdiary_agent/graph.py`：图拓扑完全不变
+- `workdiary_agent/nodes/polish.py`：polish 不关心模板类型
+- `workdiary_agent/nodes/extract.py`：提取逻辑不变
+- `workdiary_agent/state.py`：`template_type: Optional[str]` 已是字符串，无需改
+- `app.py`：UI 层通过 `result.get("template_type")` 显示，自动适配新值
+- `workdiary_agent/storage/`：存储层不关心模板类型的具体值
+
+**这说明**：模板系统的扩展点集中在 draft 节点和 router，其他层都对模板类型透明，是松耦合的设计。
+
+### 如何对面试官表述
+> "加第 4 种模板只需要改 4 处：draft.py 里加 system prompt 和字典条目，router/agent.py 里更新分类 prompt 和归一化集合，route_template.py 里更新覆盖校验集合，再加测试用例。
+>
+> 不需要改的地方很多：graph.py 的拓扑、polish 节点、extract 节点、存储层、UI 层——它们都对模板类型的具体值透明，只传递字符串。这说明模板系统的扩展点设计是收敛的，改动范围可控。"
+
+### 亮点
+- 能精确定位需要改和不需要改的地方，说明对代码依赖关系有清晰认知
+- "扩展点收敛"这个表述展示了对系统设计的理解
+
+### 瓶颈
+- 归一化集合 `valid_types` 在三个地方都有，加新模板时需要同步修改三处，容易漏
+- 理想做法是把合法模板类型定义为一个常量，集中管理
+
+**进步空间**：
+```python
+# workdiary_agent/constants.py
+VALID_TEMPLATE_TYPES = {"技术型", "业务型", "混合型"}  # 单一来源
+```
+所有用到这个集合的地方都从这里导入，加新模板只改一处。
+
+### 突出的能力
+**代码依赖关系的清晰认知** + **扩展性设计的评估能力**
+
+---
+
+## Q17：`draft_node` 里 `_TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM)` 为什么用 `_MIXED_SYSTEM` 作为默认值？
+
+*（也可能被问成：如果 template_type 是 None 或者未知值，draft 会用哪个模板？）*
+
+### 面试官想听到的
+考查点：**防御性编程和默认值选择的设计意图**，以及对 LLM 输出不确定性的处理。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/draft.py:75, 105`：
+```python
+template_type = state.get("template_type", "混合型")   # 第一层默认
+# ...
+system_prompt = _TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM)  # 第二层默认
+```
+
+**两层防御**：
+- 第一层：`state.get("template_type", "混合型")`，如果 state 里没有 template_type，默认"混合型"
+- 第二层：`_TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM)`，如果 template_type 不在字典里（比如 TemplateRouterAgent 返回了意外值），也用混合型
+
+**为什么选"混合型"作为默认**：混合型模板同时包含"业务影响"和"技术工作"两个维度，是最通用的格式，适合大多数工作描述。退化到混合型比退化到技术型或业务型更安全——不会因为选错了单一维度的模板而丢失信息。
+
+**实际上 `route_template_node` 已经有归一化**（`workdiary_agent/router/agent.py:66-68`），所以第二层防御理论上不会触发。但作为防御性编程，保留它是合理的。
+
+### 如何对面试官表述
+> "混合型模板是最通用的，包含业务影响和技术工作两个维度，退化到混合型比退化到单一维度的模板损失更小。这里有两层防御：state 里没有 template_type 时默认混合型，template_type 不在字典里时也用混合型。虽然 route_template_node 已经做了归一化，理论上第二层不会触发，但作为防御性编程保留它是值得的——LLM 的输出永远有不确定性。"
+
+### 亮点
+- 能解释"为什么选混合型"而不是随便选一个，说明有设计意图
+- 识别出两层防御，并说明它们的关系
+
+### 瓶颈
+- 如果未来添加新模板，这里的默认值可能需要重新评估
+- 两层防御的存在可能掩盖 TemplateRouterAgent 的 bug（返回了非法值但被静默处理）
+
+### 突出的能力
+**防御性编程的设计意图理解** + **LLM 不确定性的处理意识**
+
+---
+
+## Q18：`@st.cache_resource` 缓存了 graph 对象，这意味着 SqliteSaver 的数据库连接也被缓存了。多用户场景下有什么问题？
+
+*（也可能被问成：如果两个用户同时生成日报，会互相干扰吗？）*
+
+### 面试官想听到的
+考查点：**并发安全性分析**，能否识别共享资源的竞态风险。
+
+### 代码中的实际方案
+
+`app.py:21-24`：
+```python
+@st.cache_resource
+def get_graph():
+    return build_graph(use_sqlite=True)
+```
+
+`workdiary_agent/graph.py:125-126`：
+```python
+conn = sqlite3.connect("graph_state.db", check_same_thread=False)
+checkpointer = SqliteSaver(conn)
+```
+
+**`check_same_thread=False` 的含义**：允许同一个 SQLite 连接被多个线程使用（SQLite 默认只允许创建连接的线程使用它）。
+
+**多用户场景下的情况**：
+- 所有用户共享同一个 `graph` 对象和同一个 `conn`（SQLite 连接）
+- 每个用户有独立的 `thread_id`，所以逻辑上的状态是隔离的
+- 但底层的 SQLite 连接是共享的，并发写入时由 SQLite 的文件级锁保护
+
+**SQLite 的并发限制**：
+- SQLite 支持多读单写（WAL 模式下可以并发读）
+- 写操作需要获取文件锁，并发写入时会串行化
+- 高并发下会出现 `database is locked` 错误
+
+**实际风险**：对于单用户工具（这个项目的定位），没有问题。如果有多个并发用户同时调用 `graph.invoke()`，可能出现写入冲突。
+
+### 理想方案
+
+**方案一（小规模多用户）**：为每个用户会话创建独立的 SqliteSaver 连接
+```python
+# 在 session_state 里存连接，而不是 cache_resource
+if "graph" not in st.session_state:
+    conn = sqlite3.connect(f"graph_state_{st.session_state.thread_id}.db")
+    st.session_state.graph = build_graph_with_conn(conn)
+```
+
+**方案二（大规模）**：换用 PostgreSQL checkpointer，天然支持并发
+```python
+from langgraph.checkpoint.postgres import PostgresSaver
+checkpointer = PostgresSaver.from_conn_string("postgresql://...")
+```
+
+### 如何对面试官表述
+> "cache_resource 缓存了 graph 实例，连带着 SqliteSaver 的数据库连接也被共享了。check_same_thread=False 允许多线程使用同一个连接，但 SQLite 本身是文件级锁，并发写入时会串行化，高并发下可能出现 'database is locked' 错误。
+>
+> 对于单用户工具这不是问题。如果要支持多用户，方案一是把 graph 实例从 cache_resource 移到 session_state，每个用户独立连接；方案二是换 PostgreSQL checkpointer，天然支持并发。"
+
+### 亮点
+- 说清楚了 `check_same_thread=False` 的含义，而不是模糊带过
+- 给出了两个层次的解决方案
+
+### 瓶颈
+- 每个用户独立数据库文件（方案一）会导致文件数量爆炸，需要清理机制
+- PostgreSQL 方案引入了额外的基础设施依赖
+
+### 突出的能力
+**并发安全性分析** + **SQLite 并发限制的深度理解**
+
+---
+
+## Q19：polish 节点的 system prompt 里说"不要添加原文中没有的事实信息，只改语气和表达方式"，这个约束 LLM 能保证遵守吗？
+
+*（也可能被问成：你怎么防止 LLM 在润色时捏造数据？有验证机制吗？）*
+
+### 面试官想听到的
+考查点：**LLM 可靠性和 AI 安全设计**，能否识别 prompt 约束的局限性，以及如何用工程手段补充。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/polish.py:24-35`（system prompt 关键部分）：
+```
+注意：不要添加原文中没有的事实信息。只改语气和表达方式。
+```
+
+以及 draft 节点的三个模板都有：
+```
+保持原始信息，不捏造细节
+```
+
+**LLM 能保证遵守吗？不能完全保证。**
+
+这是一个 prompt 层面的约束，LLM 会尽力遵守，但没有任何机制验证它是否真的遵守了。常见的违反场景：
+1. 用户输入"今天响应时间提升了"，LLM 可能自动补充"提升了约 30%"
+2. LLM 在"下一步"章节里发明了用户没提到的计划
+3. 量化指标占位符被替换成了捏造的数字
+
+**代码中没有任何验证机制**：没有对比 `raw_input` 和 `polished` 的内容，没有检测是否有新的数字出现，没有事实核查步骤。
+
+### 理想方案（按成本从低到高）
+
+**方案一：在 prompt 里加强约束**（成本最低，效果有限）
+```
+如果原文没有数字，绝对不能在润色版中出现任何数字（0-9）。
+```
+
+**方案二：事后验证节点**（增加一个 LLM 调用）
+```python
+def verify_node(state: AgentState) -> dict:
+    """Verify polished content doesn't hallucinate facts not in raw_input."""
+    prompt = f"""
+    原始描述：{state.get('raw_input')}
+    润色版本：{state.get('polished')}
+    
+    请检查润色版本是否添加了原始描述中没有的事实信息（特别是数字、日期、具体成果）。
+    如果有，列出哪些内容是捏造的。如果没有，回答"验证通过"。
+    """
+```
+
+**方案三：规则验证**（成本最低，只能检测数字）
+```python
+import re
+raw_numbers = set(re.findall(r'\d+', state.get('raw_input', '')))
+polished_numbers = set(re.findall(r'\d+', state.get('polished', '')))
+new_numbers = polished_numbers - raw_numbers
+if new_numbers:
+    log.warning(f"Potential hallucination: new numbers {new_numbers} in polished")
+```
+
+### 如何对面试官表述
+> "Prompt 约束是软约束，LLM 会尽力遵守，但没有任何保证。常见违反场景是 LLM 自动补充了用户没提到的数字或计划。代码里没有验证机制，这是明显的缺口。
+>
+> 修复方案有三个层次：加强 prompt 约束（成本低，效果有限）；加一个验证节点，用 LLM 检查润色版是否有幻觉内容（成本高但最准确）；或者用正则检测新增的数字（成本最低，只能覆盖数字幻觉）。当前项目没有做，是因为这是求职 demo，完整的事实核查超出了 scope。"
+
+### 亮点
+- 主动说出 prompt 约束的局限性，而不是假装它能保证正确
+- 提出了三个层次的方案，说明有系统性思考
+
+### 瓶颈
+- 验证节点会增加一次 LLM 调用，成本和延迟都增加
+- 规则验证（正则）只能检测数字，无法检测其他类型的幻觉
+
+### 突出的能力
+**LLM 可靠性的现实认知** + **AI 安全的工程化思维**
+
+---
+
+## Q20：`enrich_node` 里 git log 读取（同步 I/O）和 data_input 提取（LLM 调用）是串行的，能并行吗？
+
+*（也可能被问成：enrich 节点的性能可以优化吗？两个操作有依赖关系吗？）*
+
+### 面试官想听到的
+考查点：**并发优化意识**，能否识别可以并行的独立操作，以及 LangGraph 同步节点的限制。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/enrich.py:104-113`：
+```python
+def enrich_node(state: AgentState) -> dict:
+    # Step 1: Git log (sync IO) — always runs
+    repo_path = state.get("repo_path", "") or ""
+    git_log = _read_git_log(repo_path)          # ← 可能耗时 0.5-2s
+
+    # Step 2: Data input extraction via LLM
+    data_input = state.get("data_input", "") or ""
+    data_summary = _extract_data_summary(data_input)  # ← 可能耗时 2-5s
+
+    return {"git_log": git_log, "data_summary": data_summary}
+```
+
+**两个操作完全独立，没有依赖关系**。git log 读取不需要 data_summary，data_input 提取不需要 git_log。
+
+**当前串行总耗时**：最坏情况 `0.5 + 5 = 5.5` 秒。
+
+**如果并行**：最坏情况 `max(0.5, 5) = 5` 秒，节省约 10% 时间。
+
+**为什么没有并行**：LangGraph 的节点函数是同步的（`def enrich_node`，不是 `async def`）。在同步函数里用 `asyncio.gather` 需要额外处理事件循环，比较麻烦。
+
+### 理想方案
+
+**方案一：用 `concurrent.futures.ThreadPoolExecutor`（同步节点里的并行）**
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+def enrich_node(state: AgentState) -> dict:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_git = executor.submit(_read_git_log, repo_path)
+        future_data = executor.submit(_extract_data_summary, data_input)
+        git_log = future_git.result()
+        data_summary = future_data.result()
+    return {"git_log": git_log, "data_summary": data_summary}
+```
+
+**方案二：改为异步节点**
+```python
+import asyncio
+
+async def enrich_node(state: AgentState) -> dict:
+    git_log, data_summary = await asyncio.gather(
+        asyncio.to_thread(_read_git_log, repo_path),
+        _extract_data_summary_async(data_input),  # 需要 async 版本
+    )
+    return {"git_log": git_log, "data_summary": data_summary}
+```
+
+LangGraph 1.x 支持异步节点，但需要 `graph.ainvoke()` 调用，Streamlit 的支持也需要额外处理。
+
+### 如何对面试官表述
+> "两个操作完全独立，没有依赖关系，理论上可以并行。当前是串行，最坏情况 5.5 秒。并行化的障碍是节点函数是同步的，在同步函数里做异步并行需要用 ThreadPoolExecutor。
+>
+> 实际收益有限——LLM 调用是 5 秒，git log 是 0.5 秒，并行只节省 0.5 秒，约 10%。如果整个图的总耗时是 30 秒，这个优化不是瓶颈。真正的优化方向是让 LLM 调用支持流式输出，让用户更早看到内容，而不是减少总耗时。"
+
+### 亮点
+- 不只说"可以并行"，还量化了收益（节省 0.5 秒，约 10%）
+- 指出了"真正的优化方向"（流式输出 vs 减少总耗时），说明有系统性思维
+
+### 瓶颈
+- ThreadPoolExecutor 引入了线程，GitPython 的线程安全性需要验证
+- 异步节点需要整个调用链都支持 async，改动范围更大
+
+### 突出的能力
+**性能优化的量化分析** + **识别真正瓶颈而不是优化非关键路径**
+
+---
+
+## Q21：`save_node` 里 `save_report(state)` 和 `save_markdown(polished, today)` 如果一个成功一个失败，会怎样？
+
+*（也可能被问成：save_node 的两个操作有原子性保证吗？如果 markdown 写入失败但数据库写入成功，怎么办？）*
+
+### 面试官想听到的
+考查点：**事务和原子性意识**，能否识别多步操作的一致性问题。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/save.py:25-29`：
+```python
+save_report(state)           # ← 写 history.db
+export_path = save_markdown(polished, today)   # ← 写 exports/ 目录
+```
+
+**没有任何事务保护**：两个操作是独立的，没有原子性保证。
+
+**场景一：`save_report` 成功，`save_markdown` 失败**
+- `history.db` 里有记录，但 `exports/` 目录里没有文件
+- `export_path` 不会被写入 state（因为函数抛异常了）
+- 用户看到"生成失败"，但数据库里已经有了这条记录
+- 下次生成会再写一条新记录，数据库里出现重复
+
+**场景二：`save_report` 失败**
+- `save_markdown` 不会执行（Python 顺序执行，前面抛异常后面不跑）
+- `history.db` 里没有记录，`exports/` 也没有文件
+- 用户看到"生成失败"，数据丢失
+
+**代码中没有错误处理**：两个函数的异常都会向上传播，被 `app.py:125-131` 的通用 `except Exception` 捕获，显示"生成日报时出现错误"。
+
+### 理想方案
+
+**方案一：独立错误处理，最大化成功率**
+```python
+def save_node(state: AgentState) -> dict:
+    polished = state.get("polished", "") or ""
+    today = datetime.date.today().isoformat()
+    export_path = None
+
+    try:
+        save_report(state)
+    except Exception:
+        log.exception("Failed to save report to history.db")
+        # 不中断，继续尝试导出
+
+    try:
+        export_path = save_markdown(polished, today)
+    except Exception:
+        log.exception("Failed to export markdown")
+
+    return {"final_report": polished, "export_path": export_path}
+```
+
+**方案二：幂等写入，防止重复记录**
+在 `save_report` 里加 `INSERT OR IGNORE`（基于日期+raw_input 的唯一约束），防止重复写入。
+
+### 如何对面试官表述
+> "两个操作没有原子性保证。最危险的场景是 save_report 成功但 save_markdown 失败——数据库里有记录，但文件没写出来，用户看到错误，下次重试会写入重复记录。
+>
+> 修复方案有两个方向：独立错误处理，让两个操作互不影响，最大化成功率；或者加幂等约束，防止重复写入。对于这个项目，独立错误处理更合适——日志写入失败不应该影响文件导出，反之亦然。"
+
+### 亮点
+- 识别了两种失败场景，而不是只说"可能出错"
+- 提出了"幂等写入"这个具体的技术方案
+
+### 瓶颈
+- 独立错误处理后，用户可能看到"生成成功"但实际上数据库写入失败了，需要在 UI 上有更细粒度的提示
+
+### 突出的能力
+**事务和原子性意识** + **多步操作的一致性设计**
+
+---
+
+## Q22：你的 `with_structured_output(StructuredInfo)` 直接返回 Pydantic 对象，但 LangGraph 的 checkpointer 序列化时会怎样处理这个对象？
+
+*（也可能被问成：为什么测试里 mock 的 StructuredInfo 必须是真实的 Pydantic 对象，不能是 MagicMock？）*
+
+### 面试官想听到的
+考查点：**LangGraph 序列化机制的深度理解**，以及 Pydantic 对象在 checkpointer 中的处理方式。
+
+### 代码中的实际方案
+
+`workdiary_agent/nodes/extract.py:48-55`：
+```python
+structured_llm = llm.with_structured_output(StructuredInfo)
+result: StructuredInfo = structured_llm.invoke(messages)
+return {"structured_info": result}   # ← Pydantic 对象写入 state
+```
+
+**LangGraph 的 checkpointer 序列化**：
+
+SqliteSaver（和 InMemorySaver）使用 `msgpack` 序列化 AgentState，然后存储到数据库。
+
+**问题**：`StructuredInfo` 是 Pydantic `BaseModel` 的子类，不是原生 Python 类型。msgpack 不知道如何序列化它。
+
+**LangGraph 的处理方式**：LangGraph 1.x 有一个注册机制，允许自定义类型的序列化/反序列化。但 `StructuredInfo` 没有显式注册，会触发：
+```
+Deserializing unregistered type workdiary_agent.state.StructuredInfo from checkpoint.
+This will be blocked in a future version.
+```
+
+**这就是为什么测试里必须用真实 Pydantic 对象**（`tests/test_phase04_hitl.py:28-35`）：
+```python
+mock_structured.invoke.return_value = StructuredInfo(
+    tasks=["完成登录模块开发"],
+    outputs=["登录模块代码"],
+    blockers=[],
+    progress="登录模块开发完成",
+)
+```
+如果返回 `MagicMock()`，msgpack 无法序列化它，checkpointer 在 interrupt 时会失败。
+
+### 理想方案
+
+显式注册 StructuredInfo 到 LangGraph 的 msgpack 允许列表：
+```python
+# 在 graph.py 或 state.py 里
+import os
+allowed = os.environ.get("LANGGRAPH_ALLOWED_MSGPACK_MODULES", "")
+os.environ["LANGGRAPH_ALLOWED_MSGPACK_MODULES"] = (
+    allowed + ",workdiary_agent.state" if allowed else "workdiary_agent.state"
+)
+```
+或者等待 LangGraph 提供更好的 Pydantic 集成 API。
+
+### 如何对面试官表述
+> "LangGraph 的 checkpointer 用 msgpack 序列化状态，但 Pydantic BaseModel 不是原生类型，没有显式注册就会触发'Deserializing unregistered type'的警告。这就是为什么测试里 mock 必须返回真实的 StructuredInfo 对象——如果返回 MagicMock，interrupt 时 checkpointer 序列化会失败。
+>
+> 这个 warning 说明 LangGraph 目前是用 pickle-like 的方式处理未注册类型，在未来版本可能被 block。修复方案是显式注册 StructuredInfo 到 LANGGRAPH_ALLOWED_MSGPACK_MODULES 环境变量。"
+
+### 亮点
+- 能解释 warning 的根本原因（msgpack 序列化 + 未注册类型）
+- 连接了 warning 和测试设计的关系，说明是真实踩过的
+
+### 瓶颈
+- 环境变量方案是临时的，LangGraph 未来版本可能改变 API
+- 如果 StructuredInfo 的字段有嵌套的复杂类型，序列化问题会更复杂
+
+### 突出的能力
+**LangGraph 序列化机制的深度理解** + **测试设计与运行时行为的关联分析**
+
+---
+
+## Q23：用户提交了空的工作描述，你的系统会怎样？从 UI 到图执行，每一层的防御是什么？
+
+*（也可能被问成：空输入的防御是几层的？哪一层是最关键的？）*
+
+### 面试官想听到的
+考查点：**分层防御设计**，能否追踪一个边界输入从 UI 到底层的完整处理路径。
+
+### 代码中的实际方案
+
+**第一层：UI 层（app.py:57-59）**
+```python
+if not raw_input.strip():
+    st.error("请填写工作描述（必填）")
+    return
+```
+用户点击「生成日报」时，Streamlit 检查输入是否为空，如果是则显示错误并提前返回，不触发 `graph.invoke()`。
+
+**第二层：extract_node（workdiary_agent/nodes/extract.py:22-23）**
+```python
+if not raw_input:
+    return {"structured_info": StructuredInfo()}   # 返回空的 StructuredInfo
+```
+如果 `raw_input` 为空（不应该到达这里，但作为防御），返回空的 StructuredInfo，不调用 LLM。
+
+**第三层：draft_node（workdiary_agent/nodes/draft.py:93-94）**
+```python
+else:
+    context = f"原始描述：{raw_input}"
+```
+如果 `structured_info` 为 None（StructuredInfo 提取失败），只用 `raw_input` 构建 context。
+
+**第四层：polish_node（workdiary_agent/nodes/polish.py:48-50）**
+```python
+draft = state.get("draft", "")
+if not draft or draft == "[stub draft]":
+    return {"polished": draft or ""}
+```
+如果 draft 为空，直接返回空字符串，不调用 LLM。
+
+**总结**：4 层防御，第一层是最关键的（UI 层拦截，不浪费 API 调用），后面三层是纵深防御。
+
+### 如何对面试官表述
+> "空输入有 4 层防御：第一层在 UI，点击生成时检查 raw_input 是否为空，是则显示错误并提前返回，不调用图——这是最关键的一层，不浪费 API 调用；第二层在 extract_node，raw_input 为空时返回空 StructuredInfo，不调用 LLM；第三层在 draft_node，structured_info 为 None 时只用 raw_input 构建 context；第四层在 polish_node，draft 为空时直接返回，不调用 LLM。
+>
+> 纵深防御的价值在于：即使某一层被绕过（比如直接调用 graph.invoke() 而不走 UI），后面的层仍然能保护系统不崩溃。"
+
+### 亮点
+- 能追踪完整的 4 层防御路径，说明对代码流程有清晰认知
+- 说出了"纵深防御"的价值，不只是说"有防御"
+
+### 瓶颈
+- 第二层到第四层的防御会让系统"静默成功"——空输入最终可能生成一个空的日报，而不是明确的错误提示
+- 没有对输入长度的上限检查（超长输入可能导致 token 超限）
+
+### 突出的能力
+**分层防御的系统性设计** + **边界输入的完整路径追踪**
+
+---
+
 ## 快问快答
 
 | 问题 | 关键词 |
