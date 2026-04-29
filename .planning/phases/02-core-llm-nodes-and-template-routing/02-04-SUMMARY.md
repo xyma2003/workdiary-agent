@@ -29,7 +29,7 @@ key-files:
 
 key-decisions:
   - "_make_llm() with ANTHROPIC_CUSTOM_HEADERS must be used in all LLM-calling modules —
-    bare ChatAnthropic() without proxy headers causes 400 BadRequestError on Meituan proxy"
+    bare ChatAnthropic() without proxy headers causes 400 BadRequestError on corporate proxy"
 
 patterns-established:
   - "_make_llm() factory pattern: copy from draft.py/polish.py to any new LLM-calling module"
@@ -80,7 +80,7 @@ Each task was committed atomically:
 
 ## Decisions Made
 
-- _make_llm() proxy-header pattern is now established as the mandatory pattern for all LLM-calling modules in this project. The Meituan internal proxy requires X-Working-Dir header which is not passed by bare ChatAnthropic(). This pattern was already present in draft.py and polish.py — extract.py and router/agent.py were simply missing it.
+- _make_llm() proxy-header pattern is now established as the mandatory pattern for all LLM-calling modules in this project. The corporate proxy requires X-Working-Dir header which is not passed by bare ChatAnthropic(). This pattern was already present in draft.py and polish.py — extract.py and router/agent.py were simply missing it.
 
 ## Deviations from Plan
 
@@ -88,7 +88,7 @@ Each task was committed atomically:
 
 **1. [Rule 1 - Bug] Fixed missing proxy headers in extract_node and TemplateRouterAgent**
 - **Found during:** Task 1 (Run Phase 2 test suite)
-- **Issue:** extract_node used `ChatAnthropic(model="claude-sonnet-4-5")` without the ANTHROPIC_CUSTOM_HEADERS that the Meituan proxy requires (X-Working-Dir). Same issue in router/agent.py analyze_content_node and decide_template_node. Both caused `anthropic.BadRequestError: 400 Request is not allowed`.
+- **Issue:** extract_node used `ChatAnthropic(model="claude-sonnet-4-5")` without the ANTHROPIC_CUSTOM_HEADERS that the corporate proxy requires (X-Working-Dir). Same issue in router/agent.py analyze_content_node and decide_template_node. Both caused `anthropic.BadRequestError: 400 Request is not allowed`.
 - **Fix:** Added `_make_llm()` factory (identical pattern to draft.py and polish.py) to both files; replaced all bare `ChatAnthropic()` calls with `_make_llm()`.
 - **Files modified:** workdiary_agent/nodes/extract.py, workdiary_agent/router/agent.py
 - **Verification:** All 5 Phase 2 tests now pass (125s run time, real LLM calls)
@@ -111,7 +111,7 @@ Each task was committed atomically:
 
 ## Issues Encountered
 
-- 3 of 5 Phase 2 tests failed on first run due to 400 BadRequestError from Meituan proxy — all resolved by adding _make_llm() factory.
+- 3 of 5 Phase 2 tests failed on first run due to 400 BadRequestError from corporate proxy — all resolved by adding _make_llm() factory.
 - 2 of 5 tests (draft, polish) were already passing because those files already had _make_llm().
 
 ## Known Stubs

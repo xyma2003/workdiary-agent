@@ -10,7 +10,7 @@ def make_llm() -> ChatAnthropic:
     """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
 
     The environment variable is a newline-separated list of 'Key: Value' pairs.
-    Required by the Meituan internal proxy (mcli.sankuai.com) to identify the caller.
+    Required by some corporate proxy environments to identify the caller.
     """
     custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
     headers: dict[str, str] = {}

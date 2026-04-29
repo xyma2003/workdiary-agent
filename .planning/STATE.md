@@ -86,7 +86,7 @@ Recent decisions affecting current work:
 - [Phase 02-core-llm-nodes-and-template-routing]: RouterState is independent TypedDict isolated from AgentState; fallback to 混合型 for unexpected LLM output
 - [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() factory parses ANTHROPIC_CUSTOM_HEADERS env var for ChatAnthropic default_headers — proxy requires X-Working-Dir header not read automatically
 - [Phase 02-core-llm-nodes-and-template-routing]: Each template has dedicated system prompt constant; 【已选用XX模板】 mandated as first line in prompt (TMPL-02 compliance)
-- [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() with ANTHROPIC_CUSTOM_HEADERS must be used in all LLM-calling modules — bare ChatAnthropic() without proxy headers causes 400 BadRequestError on Meituan proxy
+- [Phase 02-core-llm-nodes-and-template-routing]: _make_llm() with ANTHROPIC_CUSTOM_HEADERS must be used in all LLM-calling modules — bare ChatAnthropic() without proxy headers causes 400 BadRequestError on corporate proxy
 - [Phase 02-core-llm-nodes-and-template-routing]: route_template_node must guard against overwriting user-set template_type — check state.get("template_type") and skip LLM classification if already set (TMPL-03)
 - [Phase 03-enrichment-tools]: enrich_node handles git reading and data_input LLM extraction in single node call (D-08, D-09)
 - [Phase 03-enrichment-tools]: git_log=None on all 4 git error types (InvalidGitRepositoryError, NoSuchPathError, GitCommandError, Exception) — node never raises

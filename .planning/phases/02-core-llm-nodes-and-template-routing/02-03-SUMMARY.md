@@ -82,7 +82,7 @@ Each task was committed atomically:
 - `workdiary_agent/nodes/polish.py` - Replaced stub; _POLISH_SYSTEM with goal verbs + 未提供量化指标 requirement; refines draft not regenerates; _make_llm() with header parsing
 
 ## Decisions Made
-- _make_llm() factory added to both nodes to parse ANTHROPIC_CUSTOM_HEADERS env var — ChatAnthropic does not automatically read this non-standard env var, causing 400 on internal Meituan proxy
+- _make_llm() factory added to both nodes to parse ANTHROPIC_CUSTOM_HEADERS env var — ChatAnthropic does not automatically read this non-standard env var, causing 400 on internal corporate proxy
 - Each of the 3 templates has a dedicated system prompt constant to keep template structures explicit and independently maintainable
 - polish_node early-exits on empty/stub draft rather than sending empty content to LLM
 - Default fallback to "混合型" in draft_node for resilience when template_type is missing from state
@@ -93,7 +93,7 @@ Each task was committed atomically:
 
 **1. [Rule 1 - Bug] Fixed ChatAnthropic missing custom proxy headers**
 - **Found during:** Task 1 (draft_node implementation and test verification)
-- **Issue:** `ChatAnthropic(model="claude-sonnet-4-5")` fails with 400 "Request is not allowed" on the internal proxy (`mcli.sankuai.com`). The proxy requires `X-Working-Dir` header from `ANTHROPIC_CUSTOM_HEADERS` env var, which ChatAnthropic does not read automatically.
+- **Issue:** `ChatAnthropic(model="claude-sonnet-4-5")` fails with 400 "Request is not allowed" on the internal proxy (`internal-proxy.example.com`). The proxy requires `X-Working-Dir` header from `ANTHROPIC_CUSTOM_HEADERS` env var, which ChatAnthropic does not read automatically.
 - **Fix:** Added `_make_llm()` factory that parses `ANTHROPIC_CUSTOM_HEADERS` (newline-separated `Key: Value` pairs) and passes them as `default_headers` to ChatAnthropic. Applied same fix to polish_node.
 - **Files modified:** `workdiary_agent/nodes/draft.py`, `workdiary_agent/nodes/polish.py`
 - **Verification:** `test_draft_node_uses_template_type_from_state` and `test_polish_node_produces_boss_friendly_output` both pass
@@ -102,7 +102,7 @@ Each task was committed atomically:
 ---
 
 **Total deviations:** 1 auto-fixed (Rule 1 - Bug)
-**Impact on plan:** Essential fix for LLM calls to work on the project's Meituan internal proxy. No scope creep. Same fix pattern should be backported to extract.py and route_template.py (logged in deferred-items).
+**Impact on plan:** Essential fix for LLM calls to work on the project's corporate proxy. No scope creep. Same fix pattern should be backported to extract.py and route_template.py (logged in deferred-items).
 
 ## Issues Encountered
 - `ANTHROPIC_CUSTOM_HEADERS` env var not automatically consumed by ChatAnthropic — required explicit parsing and passing as `default_headers`. This same bug exists in extract.py and route_template.py from plan 02-02 but is out of scope for this plan.
