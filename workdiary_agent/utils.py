@@ -7,10 +7,20 @@ from langchain_anthropic import ChatAnthropic
 
 
 def make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with custom headers parsed from ANTHROPIC_CUSTOM_HEADERS env var.
+    """Return ChatAnthropic with optional custom headers for proxy environments.
 
-    The environment variable is a newline-separated list of 'Key: Value' pairs.
-    Required by some corporate proxy environments to identify the caller.
+    Supports two auth modes:
+      - Standard: set ANTHROPIC_API_KEY, leave ANTHROPIC_CUSTOM_HEADERS unset.
+      - Corporate proxy: set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (picked up
+        automatically by the anthropic SDK), and ANTHROPIC_CUSTOM_HEADERS for any
+        extra headers the proxy requires.
+
+    ANTHROPIC_CUSTOM_HEADERS format — newline-separated 'Key: Value' pairs:
+        X-Custom-Header: my-value
+        X-Another-Header: another-value
+
+    If ANTHROPIC_CUSTOM_HEADERS is not set, no extra headers are added and
+    standard API key auth works as-is.
     """
     custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
     headers: dict[str, str] = {}
