@@ -1,5 +1,0 @@
-crewai==1.14.4
-crewai-tools
-anthropic
-streamlit
-python-dotenv

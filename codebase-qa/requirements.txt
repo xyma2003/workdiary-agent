@@ -1,7 +1,0 @@
-pydantic-ai[anthropic]==1.91.0
-chromadb
-sentence-transformers
-streamlit
-gitpython
-python-dotenv
-nest-asyncio
