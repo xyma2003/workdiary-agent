@@ -44,7 +44,7 @@ User: approve
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/workdiary-agent.git
+git clone https://github.com/xyma2003/workdiary-agent.git
 cd workdiary-agent
 ```
 
