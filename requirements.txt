@@ -5,3 +5,4 @@ langchain-anthropic==1.4.1
 langgraph-checkpoint-sqlite==3.0.3
 streamlit==1.56.0
 gitpython==3.1.47
+pytest>=8.0.0

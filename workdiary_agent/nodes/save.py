@@ -23,7 +23,9 @@ def save_node(state: AgentState) -> dict:
     today = datetime.date.today().isoformat()
 
     # D-04: write to history.db (never graph_state.db)
-    save_report(state)
+    # Inject today's date so save_report persists the correct date rather than
+    # re-computing it (lets tests inject specific dates via state too).
+    save_report({**state, "date": today})
 
     # D-05, D-06: write exports/daily_report_{YYYY-MM-DD}.md
     export_path = save_markdown(polished, today)

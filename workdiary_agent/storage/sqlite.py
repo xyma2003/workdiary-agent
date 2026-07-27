@@ -45,7 +45,8 @@ def save_report(state: Any) -> None:
     Called by save_node (workdiary_agent/nodes/save.py) after HITL approval.
     Uses state.get() so it works with both TypedDict and plain dict.
     """
-    date = datetime.date.today().isoformat()
+    # Respect date passed in state (tests inject specific dates); fall back to today.
+    date = state.get("date") or datetime.date.today().isoformat()
     created_at = datetime.datetime.now().isoformat()
     raw_input = state.get("raw_input", "") or ""
     template_type = state.get("template_type", "") or ""
