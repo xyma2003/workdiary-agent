@@ -3,25 +3,35 @@
 import os
 from pathlib import Path
 
-from langchain_anthropic import ChatAnthropic
 
+def make_llm():
+    """Return LLM — supports SiliconFlow (OpenAI-compatible) or Anthropic.
 
-def make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with optional custom headers for proxy environments.
+    If OPENAI_API_KEY is set, uses SiliconFlow / any OpenAI-compatible endpoint
+    (OPENAI_API_BASE + OPENAI_MODEL configurable). Otherwise falls back to
+    Anthropic with optional corporate proxy headers.
 
-    Supports two auth modes:
+    Anthropic mode supports two auth styles:
       - Standard: set ANTHROPIC_API_KEY, leave ANTHROPIC_CUSTOM_HEADERS unset.
       - Corporate proxy: set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (picked up
-        automatically by the anthropic SDK), and ANTHROPIC_CUSTOM_HEADERS for any
-        extra headers the proxy requires.
+        automatically by the anthropic SDK), and ANTHROPIC_CUSTOM_HEADERS for
+        any extra headers the proxy requires.
 
-    ANTHROPIC_CUSTOM_HEADERS format — newline-separated 'Key: Value' pairs:
-        X-Custom-Header: my-value
-        X-Another-Header: another-value
-
-    If ANTHROPIC_CUSTOM_HEADERS is not set, no extra headers are added and
-    standard API key auth works as-is.
+    ANTHROPIC_CUSTOM_HEADERS format — newline-separated 'Key: Value' pairs.
     """
+    # SiliconFlow / OpenAI-compatible backend (domestic-friendly)
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=os.environ.get("OPENAI_MODEL", "Qwen/Qwen3-32B"),
+            api_key=openai_key,
+            base_url=os.environ.get("OPENAI_API_BASE", "https://api.siliconflow.cn/v1"),
+            temperature=0,
+        )
+
+    # Anthropic backend (standard or corporate proxy)
+    from langchain_anthropic import ChatAnthropic
     custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
     headers: dict[str, str] = {}
     if custom_headers_str:

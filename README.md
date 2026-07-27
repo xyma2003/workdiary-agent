@@ -69,20 +69,27 @@ pip install -r requirements.txt
 
 ### 4. Configure API credentials
 
-**Option A — Direct Anthropic API key (standard):**
+The app supports two LLM backends: **SiliconFlow/OpenAI-compatible** (default, domestic-friendly) and **Anthropic** (overseas).
+
+**Option A — SiliconFlow / OpenAI-compatible (default, recommended for domestic use):**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-api03-...
+# .env
+OPENAI_API_KEY=sk-...                    # SiliconFlow API key
+OPENAI_API_BASE=https://api.siliconflow.cn/v1
+OPENAI_MODEL=Qwen/Qwen3-32B              # or deepseek-ai/DeepSeek-V3
 ```
 
-Or create a `.env` file and load it:
+When `OPENAI_API_KEY` is set, `make_llm()` in `utils.py` returns a `ChatOpenAI` routed through `OPENAI_API_BASE`. Get a SiliconFlow key at https://cloud.siliconflow.cn/ (free credits available).
+
+**Option B — Direct Anthropic API key (overseas):**
 
 ```bash
 # .env
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-**Option B — Corporate/internal proxy:**
+**Option C — Corporate/internal proxy:**
 
 ```bash
 # .env
@@ -92,7 +99,7 @@ ANTHROPIC_AUTH_TOKEN=your-auth-token
 ANTHROPIC_CUSTOM_HEADERS=X-Custom-Header: value
 ```
 
-> `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` are picked up automatically by the Anthropic SDK. `ANTHROPIC_CUSTOM_HEADERS` is parsed by `make_llm()` in `utils.py` and passed as `default_headers` to `ChatAnthropic`. No `ANTHROPIC_API_KEY` is needed for Option B.
+> If `OPENAI_API_KEY` is set, Option A takes precedence. Otherwise falls back to Anthropic (Option B or C).
 
 Load the `.env` file before running:
 
