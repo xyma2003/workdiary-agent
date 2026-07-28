@@ -9,9 +9,12 @@ Subsequent plans (06-03) extend this file with history page logic.
 import uuid
 from datetime import date
 import streamlit as st
+from dotenv import load_dotenv
 from langgraph.types import Command
 from workdiary_agent.graph import build_graph
 from workdiary_agent.storage.sqlite import get_all_reports
+
+load_dotenv(override=True)  # load .env, overriding stale shell vars (e.g. a different OPENAI_API_KEY)
 
 
 # ---------------------------------------------------------------------------
