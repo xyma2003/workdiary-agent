@@ -19,13 +19,18 @@ def save_node(state: AgentState) -> dict:
 
     Returns updated state fields: final_report and export_path.
     """
-    polished = state.get("polished", "") or ""
+    # Idempotent guard — prevents duplicate saves if node executes more than once
+    if state.get("_saved"):
+        return {}
+
+    # Prefer user-edited text over AI-generated polished version
+    polished = state.get("edited_text") or state.get("polished", "") or ""
     today = datetime.date.today().isoformat()
 
     # D-04: write to history.db (never graph_state.db)
     # Inject today's date so save_report persists the correct date rather than
     # re-computing it (lets tests inject specific dates via state too).
-    save_report({**state, "date": today})
+    save_report({**state, "date": today, "polished": polished})
 
     # D-05, D-06: write exports/daily_report_{YYYY-MM-DD}.md
     export_path = save_markdown(polished, today)
@@ -34,4 +39,5 @@ def save_node(state: AgentState) -> dict:
     return {
         "final_report": polished,
         "export_path": export_path,
+        "_saved": True,
     }

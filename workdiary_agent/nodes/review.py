@@ -36,7 +36,12 @@ def review_node(state: AgentState) -> dict:
     })
     decision = response.get("decision", "approve")
     feedback = response.get("feedback", "")
+    edited_text = response.get("edited_text")
     # D-03 + Claude's discretion: fallback for unrecognised decision values
     if decision not in ("approve", "revise"):
         decision = "approve"
-    return {"human_decision": decision, "human_feedback": feedback}
+    result = {"human_decision": decision, "human_feedback": feedback}
+    # Propagate user's inline edits so save_node persists the edited version
+    if edited_text:
+        result["edited_text"] = edited_text
+    return result

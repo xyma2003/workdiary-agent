@@ -182,22 +182,23 @@ def _render_review_ui():
 
     config = {"configurable": {"thread_id": st.session_state.thread_id}}
 
-    # D-15 + D-16 + D-18: Accept button — uses edited text if different from polished
+    # D-15 + D-16 + D-18: Accept button — passes edited text back to graph so save_node persists it
     with col1:
         if st.button("✓ 接受", type="primary", use_container_width=True, key="accept_btn"):
-            # D-18: if user edited inline, read current value from session_state
+            # D-18: read current value from session_state (includes user's inline edits)
             current_text = st.session_state.get("edit_area", polished)
             try:
                 r = get_graph().invoke(
-                    Command(resume={"decision": "approve", "feedback": ""}),
+                    Command(resume={
+                        "decision": "approve",
+                        "feedback": "",
+                        "edited_text": current_text,
+                    }),
                     config,
                 )
-                # If user edited inline, preserve the edited version in result for export
-                if current_text != polished:
-                    st.session_state.result = dict(r)
-                    st.session_state.result["polished"] = current_text
-                else:
-                    st.session_state.result = dict(r)
+                # save_node already persisted current_text via edited_text in state
+                st.session_state.result = dict(r)
+                st.session_state.result["polished"] = current_text
                 st.session_state.app_state = "done"
                 st.rerun()
             except Exception as e:

@@ -51,6 +51,7 @@ class AgentState(TypedDict, total=False):
     # --- Human-in-the-loop (Phase 4: review node via interrupt()) ---
     human_decision: Optional[str]        # Literal["approve", "revise", "edit"]
     human_feedback: Optional[str]
+    edited_text: Optional[str]           # User's inline edits from review UI (overrides polished)
 
     # --- Revision loop guard (Phase 1: revise node increments this) ---
     revision_count: int                  # Use state.get("revision_count", 0) — never bracket access
@@ -64,3 +65,4 @@ class AgentState(TypedDict, total=False):
     # --- Final output (Phase 5: save node) ---
     final_report: Optional[str]
     export_path: Optional[str]
+    _saved: bool                        # Idempotent guard — prevents duplicate saves on rerun
