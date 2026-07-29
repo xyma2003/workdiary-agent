@@ -42,3 +42,6 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# GSD workflow files (development process artifacts)
+.planning/

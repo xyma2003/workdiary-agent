@@ -35,7 +35,9 @@ User: approve
 ## Prerequisites
 
 - **Python 3.10+**
-- **Anthropic API access** — either a direct API key or a corporate proxy (see below)
+- **An LLM API key** — pick one backend:
+  - SiliconFlow (domestic, free credits, recommended for China) — https://cloud.siliconflow.cn/
+  - Anthropic (direct API key or corporate proxy)
 
 ---
 
@@ -100,12 +102,7 @@ ANTHROPIC_CUSTOM_HEADERS=X-Custom-Header: value
 ```
 
 > If `OPENAI_API_KEY` is set, Option A takes precedence. Otherwise falls back to Anthropic (Option B or C).
-
-Load the `.env` file before running:
-
-```bash
-export $(grep -v '^#' .env | xargs)
-```
+> The app auto-loads `.env` via `python-dotenv` (with `override=True`, so `.env` wins over stale shell vars). No manual `export` needed.
 
 ### 5. Run
 
@@ -175,33 +172,37 @@ exports/ + history.db
 ## Project Structure
 
 ```
-workdiary_agent/
+workdiary-agent/
 ├── app.py                  # Streamlit UI — generation page + history page
-├── graph.py                # StateGraph assembly, conditional edges, checkpointer init
-├── state.py                # AgentState TypedDict + StructuredInfo Pydantic model
-├── utils.py                # make_llm() factory + validate_repo_path()
 ├── requirements.txt
-├── nodes/
-│   ├── extract.py          # Structured extraction via with_structured_output
-│   ├── enrich.py           # Git log reader + LLM metric extraction
-│   ├── route_template.py   # Calls TemplateRouterAgent subgraph
-│   ├── draft.py            # Template-specific first draft (3 templates)
-│   ├── polish.py           # Manager-perspective rewrite (accepts revision feedback)
-│   ├── review.py           # HITL interrupt node
-│   ├── revise.py           # Increments revision_count
-│   └── save.py             # Persist to history.db + export markdown
-├── router/
-│   └── agent.py            # TemplateRouterAgent subgraph (analyse → decide)
-├── storage/
-│   ├── sqlite.py           # history.db read/write API
-│   └── export.py           # Markdown file export to exports/
-├── exports/                # Auto-created; exported markdown reports
-└── tests/
-    ├── test_graph_skeleton.py
-    ├── test_phase02_llm_nodes.py
-    ├── test_phase03_enrichment.py
-    ├── test_phase04_hitl.py
-    └── test_phase05_storage.py
+├── workdiary_agent/
+│   ├── graph.py            # StateGraph assembly, conditional edges, checkpointer init
+│   ├── state.py            # AgentState TypedDict + StructuredInfo Pydantic model
+│   ├── utils.py            # make_llm() factory + validate_repo_path()
+│   ├── nodes/
+│   │   ├── extract.py      # Structured extraction via with_structured_output
+│   │   ├── enrich.py       # Git log reader + LLM metric extraction
+│   │   ├── route_template.py  # Calls TemplateRouterAgent subgraph
+│   │   ├── draft.py        # Template-specific first draft (3 templates)
+│   │   ├── polish.py       # Manager-perspective rewrite (accepts revision feedback)
+│   │   ├── review.py       # HITL interrupt node
+│   │   ├── revise.py       # Increments revision_count
+│   │   └── save.py         # Persist to history.db + export markdown
+│   ├── router/
+│   │   └── agent.py        # TemplateRouterAgent subgraph (analyse → decide)
+│   └── storage/
+│       ├── sqlite.py       # history.db read/write API
+│       └── export.py       # Markdown file export to exports/
+├── scripts/                # Manual integration test scripts
+│   ├── test_hitl_cycle.py
+│   └── test_skeleton.py
+├── tests/                  # pytest unit tests (5 phases)
+│   ├── test_graph_skeleton.py
+│   ├── test_phase02_llm_nodes.py
+│   ├── test_phase03_enrichment.py
+│   ├── test_phase04_hitl.py
+│   └── test_phase05_storage.py
+└── exports/                # Auto-created; exported markdown reports
 ```
 
 ---
@@ -223,7 +224,8 @@ python -m pytest tests/ -v
 | Component | Library | Version |
 |-----------|---------|---------|
 | Agent orchestration | LangGraph | 1.1.9 |
-| LLM | Claude via langchain-anthropic | 1.4.1 |
+| LLM (default) | SiliconFlow / OpenAI-compatible via langchain-openai | — |
+| LLM (alt) | Claude via langchain-anthropic | 1.4.1 |
 | Structured outputs | Pydantic | 2.x |
 | HITL persistence | SQLite (langgraph-checkpoint-sqlite) | 3.0.3 |
 | UI | Streamlit | 1.56.0 |
