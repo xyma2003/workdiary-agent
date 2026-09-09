@@ -28,9 +28,9 @@ def make_llm():
 
     Anthropic mode supports two auth styles:
       - Standard: set ANTHROPIC_API_KEY, leave ANTHROPIC_CUSTOM_HEADERS unset.
-      - Corporate proxy: set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (picked up
-        automatically by the anthropic SDK), and ANTHROPIC_CUSTOM_HEADERS for
-        any extra headers the proxy requires.
+      - Corporate proxy: set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN. The
+        token is mapped to an Authorization bearer header because ChatAnthropic
+        does not expose the underlying SDK's auth_token parameter.
 
     ANTHROPIC_CUSTOM_HEADERS format — newline-separated 'Key: Value' pairs.
     """
@@ -106,6 +106,8 @@ def make_llm():
         raise LLMConfigurationError(
             "LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN"
         )
+    if auth_token and not anthropic_key:
+        headers.setdefault("Authorization", f"Bearer {auth_token}")
     kwargs = {
         "model": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
         "default_headers": headers,

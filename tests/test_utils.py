@@ -55,3 +55,16 @@ def test_missing_provider_configuration_is_actionable(monkeypatch):
 
     with pytest.raises(LLMConfigurationError, match="Set LLM_PROVIDER"):
         make_llm()
+
+
+def test_anthropic_auth_token_becomes_bearer_header(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "proxy-token")
+
+    with patch("langchain_anthropic.ChatAnthropic") as chat_anthropic:
+        make_llm()
+
+    kwargs = chat_anthropic.call_args.kwargs
+    assert kwargs["default_headers"]["Authorization"] == "Bearer proxy-token"
+    assert "api_key" not in kwargs
