@@ -9,6 +9,7 @@ DB_PATH is a module-level constant so tests can monkeypatch it:
 """
 import sqlite3
 import datetime
+import uuid
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -17,29 +18,47 @@ DB_PATH = "history.db"
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id TEXT,
     date TEXT NOT NULL,
     template_type TEXT,
     raw_input TEXT,
     polished TEXT,
+    export_path TEXT,
     created_at TEXT NOT NULL
 )
 """
 
 
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create the current schema and migrate databases from older releases."""
+    conn.execute(_CREATE_TABLE_SQL)
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()
+    }
+    if "report_id" not in existing:
+        conn.execute("ALTER TABLE reports ADD COLUMN report_id TEXT")
+    if "export_path" not in existing:
+        conn.execute("ALTER TABLE reports ADD COLUMN export_path TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_report_id "
+        "ON reports(report_id)"
+    )
+
+
 @contextmanager
 def _db(db_path: str) -> Generator[sqlite3.Connection, None, None]:
     """Context manager: open connection, ensure schema, yield, close."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute(_CREATE_TABLE_SQL)
+        _ensure_schema(conn)
         conn.commit()
         yield conn
     finally:
         conn.close()
 
 
-def save_report(state: Any) -> None:
+def save_report(state: Any) -> str:
     """Insert one row into reports table from AgentState or plain dict.
 
     Called by save_node (workdiary_agent/nodes/save.py) after HITL approval.
@@ -47,18 +66,34 @@ def save_report(state: Any) -> None:
     """
     # Respect date passed in state (tests inject specific dates); fall back to today.
     date = state.get("date") or datetime.date.today().isoformat()
-    created_at = datetime.datetime.now().isoformat()
+    report_id = state.get("report_id") or uuid.uuid4().hex
+    created_at = datetime.datetime.now().astimezone().isoformat()
     raw_input = state.get("raw_input", "") or ""
     template_type = state.get("template_type", "") or ""
     polished = state.get("polished", "") or ""
+    export_path = state.get("export_path", "") or ""
 
     with _db(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO reports (date, template_type, raw_input, polished, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (date, template_type, raw_input, polished, created_at),
+            "INSERT INTO reports "
+            "(report_id, date, template_type, raw_input, polished, export_path, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(report_id) DO UPDATE SET "
+            "date=excluded.date, template_type=excluded.template_type, "
+            "raw_input=excluded.raw_input, polished=excluded.polished, "
+            "export_path=excluded.export_path, created_at=excluded.created_at",
+            (
+                report_id,
+                date,
+                template_type,
+                raw_input,
+                polished,
+                export_path,
+                created_at,
+            ),
         )
         conn.commit()
+    return report_id
 
 
 def get_all_reports() -> list[dict]:
@@ -69,7 +104,8 @@ def get_all_reports() -> list[dict]:
     """
     with _db(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, date, template_type, raw_input, polished, created_at "
-            "FROM reports ORDER BY date DESC"
+            "SELECT id, report_id, date, template_type, raw_input, polished, "
+            "export_path, created_at FROM reports "
+            "ORDER BY date DESC, created_at DESC, id DESC"
         ).fetchall()
         return [dict(row) for row in rows]

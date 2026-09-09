@@ -1,16 +1,10 @@
-"""
-Phase 5 — Storage and Export RED test suite.
+"""Phase 5 — storage and export regression tests.
 
-Tests cover all 4 success criteria from ROADMAP.md §Phase 5:
+Tests cover:
   - A completed HITL cycle produces a row in history.db
   - get_all_reports() returns rows ordered by date descending
-  - save_markdown() produces exports/daily_report_YYYY-MM-DD.md
+  - save_markdown() produces a unique, atomic Markdown export
   - history.db and graph_state.db are separate files
-
-All 7 tests FAIL (ImportError) in RED state until Plan 05-02 and 05-03
-implement workdiary_agent/storage/sqlite.py and workdiary_agent/storage/export.py.
-
-Run: conda run -n llm-data-pipeline pytest tests/test_phase05_storage.py -v
 """
 import pytest
 import workdiary_agent.storage.sqlite as sqlite_mod
@@ -28,6 +22,7 @@ def test_save_report_writes_row(tmp_path, monkeypatch):
     monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
 
     state = {
+        "report_id": "report-1",
         "raw_input": "今天完成了登录模块",
         "template_type": "技术型",
         "polished": "完成登录模块开发，实现用户认证功能。",
@@ -36,15 +31,59 @@ def test_save_report_writes_row(tmp_path, monkeypatch):
 
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
-        "SELECT date, template_type, raw_input, polished FROM reports"
+        "SELECT report_id, date, template_type, raw_input, polished FROM reports"
     ).fetchall()
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][1] == "技术型"
-    assert rows[0][2] == "今天完成了登录模块"
-    assert rows[0][3] == "完成登录模块开发，实现用户认证功能。"
-    assert rows[0][0]  # date non-empty
+    assert rows[0][0] == "report-1"
+    assert rows[0][2] == "技术型"
+    assert rows[0][3] == "今天完成了登录模块"
+    assert rows[0][4] == "完成登录模块开发，实现用户认证功能。"
+    assert rows[0][1]  # date non-empty
+
+
+def test_save_report_is_idempotent_by_report_id(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_history_idempotent.db")
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+    base = {
+        "report_id": "same-run",
+        "raw_input": "原始记录",
+        "template_type": "技术型",
+        "polished": "first",
+    }
+    sqlite_mod.save_report(base)
+    sqlite_mod.save_report({**base, "polished": "updated"})
+
+    reports = sqlite_mod.get_all_reports()
+    assert len(reports) == 1
+    assert reports[0]["polished"] == "updated"
+
+
+def test_legacy_history_schema_is_migrated_in_place(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = str(tmp_path / "legacy_history.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE reports ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, "
+        "template_type TEXT, raw_input TEXT, polished TEXT, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO reports (date, template_type, raw_input, polished, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("2026-01-01", "技术型", "legacy", "legacy report", "2026-01-01T10:00:00"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+
+    reports = sqlite_mod.get_all_reports()
+
+    assert reports[0]["polished"] == "legacy report"
+    assert reports[0]["report_id"] is None
+    assert reports[0]["export_path"] is None
 
 
 def test_save_report_created_at_set(tmp_path, monkeypatch):
@@ -119,14 +158,15 @@ def test_get_all_reports_empty(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_save_markdown_creates_file(tmp_path, monkeypatch):
-    """save_markdown(text, date) creates exports/daily_report_YYYY-MM-DD.md containing the text."""
+    """save_markdown creates a report-id-qualified file containing the text."""
     import os
     exports_dir = str(tmp_path / "exports")
     monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
 
-    export_mod.save_markdown("report text", "2026-04-24")
+    path = export_mod.save_markdown("report text", "2026-04-24", "report-123")
 
-    expected = os.path.join(exports_dir, "daily_report_2026-04-24.md")
+    expected = os.path.join(exports_dir, "daily_report_2026-04-24_report-123.md")
+    assert path == expected
     assert os.path.exists(expected)
     assert "report text" in open(expected, encoding="utf-8").read()
 
@@ -138,10 +178,39 @@ def test_save_markdown_creates_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
 
     # Directory does not exist — function must not raise FileNotFoundError
-    export_mod.save_markdown("另一份日报内容", "2026-04-25")
+    path = export_mod.save_markdown("另一份日报内容", "2026-04-25", "abc")
 
-    expected = os.path.join(exports_dir, "daily_report_2026-04-25.md")
+    expected = os.path.join(exports_dir, "daily_report_2026-04-25_abc.md")
+    assert path == expected
     assert os.path.exists(expected)
+
+
+def test_save_markdown_does_not_overwrite_same_day(tmp_path, monkeypatch):
+    exports_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
+
+    first = export_mod.save_markdown("first", "2026-04-25", "first-id")
+    second = export_mod.save_markdown("second", "2026-04-25", "second-id")
+
+    assert first != second
+    assert open(first, encoding="utf-8").read().endswith("first\n")
+    assert open(second, encoding="utf-8").read().endswith("second\n")
+
+
+def test_save_markdown_keeps_untrusted_date_inside_export_dir(tmp_path, monkeypatch):
+    import os
+
+    exports_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
+
+    path = export_mod.save_markdown("safe", "../../outside", "report-id")
+
+    common_path = os.path.commonpath([
+        os.path.abspath(path),
+        os.path.abspath(exports_dir),
+    ])
+    assert common_path == os.path.abspath(exports_dir)
+    assert os.path.exists(path)
 
 
 # ---------------------------------------------------------------------------

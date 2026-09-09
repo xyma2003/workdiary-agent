@@ -1,9 +1,4 @@
-"""
-Phase 2 — Core LLM Nodes and Template Routing test suite.
-Tests cover all 5 success criteria from ROADMAP.md §Phase 2.
-Run: conda run -n llm-data-pipeline pytest tests/test_phase02_llm_nodes.py -v
-All tests FAIL in RED state (stubs return placeholders, not real values).
-"""
+"""Live-provider checks for core LLM nodes and template routing."""
 import pytest
 from unittest.mock import patch, MagicMock
 from workdiary_agent.state import AgentState, StructuredInfo
@@ -11,6 +6,9 @@ from workdiary_agent.nodes.extract import extract_node
 from workdiary_agent.nodes.route_template import route_template_node
 from workdiary_agent.nodes.draft import draft_node
 from workdiary_agent.nodes.polish import polish_node
+
+
+pytestmark = pytest.mark.integration
 
 
 # ---------------------------------------------------------------------------
@@ -26,11 +24,11 @@ def test_extract_node_returns_structured_info():
     assert "structured_info" in result
     info = result["structured_info"]
     assert info is not None, "structured_info must not be None"
-    assert isinstance(info, StructuredInfo), f"Expected StructuredInfo, got {type(info)}"
-    assert len(info.tasks) > 0, "tasks must be non-empty"
-    assert len(info.outputs) > 0, "outputs must be non-empty"
-    assert isinstance(info.blockers, list), "blockers must be a list"
-    assert isinstance(info.progress, str) and len(info.progress) > 0, "progress must be non-empty string"
+    assert isinstance(info, dict), f"Expected checkpoint-safe dict, got {type(info)}"
+    assert len(info["tasks"]) > 0, "tasks must be non-empty"
+    assert len(info["outputs"]) > 0, "outputs must be non-empty"
+    assert isinstance(info["blockers"], list), "blockers must be a list"
+    assert isinstance(info["progress"], str) and len(info["progress"]) > 0, "progress must be non-empty string"
 
 
 # ---------------------------------------------------------------------------

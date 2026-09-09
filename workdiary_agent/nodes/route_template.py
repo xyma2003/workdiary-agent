@@ -24,9 +24,17 @@ def route_template_node(state: AgentState) -> dict:
     # Build optional structured_info summary for richer router context
     si_text = ""
     if structured_info is not None:
-        tasks_str = "、".join(structured_info.tasks) if structured_info.tasks else ""
-        outputs_str = "、".join(structured_info.outputs) if structured_info.outputs else ""
-        si_text = f"任务：{tasks_str}；产出：{outputs_str}；进度：{structured_info.progress}"
+        if isinstance(structured_info, dict):
+            tasks = structured_info.get("tasks", [])
+            outputs = structured_info.get("outputs", [])
+            progress = structured_info.get("progress", "")
+        else:  # Backward-compatible direct node calls.
+            tasks = structured_info.tasks
+            outputs = structured_info.outputs
+            progress = structured_info.progress
+        tasks_str = "、".join(tasks) if tasks else ""
+        outputs_str = "、".join(outputs) if outputs else ""
+        si_text = f"任务：{tasks_str}；产出：{outputs_str}；进度：{progress}"
 
     router = TemplateRouterAgent()
     template_type = router.classify(raw_input, structured_info_text=si_text)

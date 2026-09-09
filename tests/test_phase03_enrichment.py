@@ -1,9 +1,4 @@
-"""
-Phase 3 — Enrichment Tools test suite.
-Tests cover all 3 success criteria from ROADMAP.md §Phase 3.
-Run: conda run -n llm-data-pipeline pytest tests/test_phase03_enrichment.py -v
-All tests FAIL in RED state (enrich_node is a stub, draft_node lacks enrichment context).
-"""
+"""Regression tests for Git and metric enrichment."""
 import pytest
 from unittest.mock import patch, MagicMock
 from workdiary_agent.state import AgentState, StructuredInfo
@@ -37,7 +32,11 @@ def test_enrich_valid_repo_produces_git_log():
 
     with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
          patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
-        state: AgentState = {"repo_path": "/fake/repo"}
+        state: AgentState = {
+            "repo_path": "/fake/repo",
+            "git_author": "me@example.com",
+            "timezone": "Asia/Shanghai",
+        }
         result = enrich_node(state)
 
     assert "git_log" in result, "result must contain git_log key"
@@ -46,6 +45,25 @@ def test_enrich_valid_repo_produces_git_log():
     assert "abc1234" in git_log, f"git_log must contain short hash 'abc1234', got: {git_log}"
     assert "feat: add login module" in git_log, f"git_log must contain commit message, got: {git_log}"
     assert "def5678" in git_log, f"git_log must contain second commit hash, got: {git_log}"
+    kwargs = mock_repo.iter_commits.call_args.kwargs
+    assert kwargs["author"] == "me@example.com"
+    assert "+08:00" in kwargs["since"]
+    assert kwargs["max_count"] == 100
+
+
+def test_enrich_without_author_skips_shared_repo_commits():
+    """If no explicit/configured identity exists, do not claim every commit."""
+    mock_repo = MagicMock()
+    reader = MagicMock()
+    reader.get_value.return_value = None
+    mock_repo.config_reader.return_value.__enter__.return_value = reader
+
+    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+         patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
+        result = enrich_node({"repo_path": "/fake/repo"})
+
+    assert result["git_log"] is None
+    mock_repo.iter_commits.assert_not_called()
 
 
 def test_enrich_invalid_repo_returns_none_no_exception():
@@ -139,8 +157,8 @@ def test_draft_node_includes_git_log_in_context():
     call_args = mock_llm.invoke.call_args
     messages = call_args[0][0]
     full_prompt = " ".join(str(m.content) for m in messages)
-    assert "今日 Git commits" in full_prompt, \
-        f"draft prompt must contain '今日 Git commits' when git_log is set. Got: {full_prompt[:300]}"
+    assert "<git_commits>" in full_prompt, \
+        f"draft prompt must delimit git_log when it is set. Got: {full_prompt[:300]}"
     assert "abc1234" in full_prompt, \
         f"draft prompt must contain the actual git_log content. Got: {full_prompt[:300]}"
 
@@ -165,7 +183,8 @@ def test_draft_node_includes_data_summary_in_context():
     call_args = mock_llm.invoke.call_args
     messages = call_args[0][0]
     full_prompt = " ".join(str(m.content) for m in messages)
-    assert "数据指标" in full_prompt, \
-        f"draft prompt must contain '数据指标' when data_summary is set. Got: {full_prompt[:300]}"
+    assert "<data_metrics>" in full_prompt, \
+        f"draft prompt must delimit data_summary when it is set. Got: {full_prompt[:300]}"
     assert "转化率15%" in full_prompt, \
         f"draft prompt must contain the actual data_summary content. Got: {full_prompt[:300]}"
+    assert "不可信的参考资料" in full_prompt

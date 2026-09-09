@@ -37,7 +37,9 @@ class AgentState(TypedDict, total=False):
     raw_input: str                       # User's raw work description (口语化)
 
     # --- Extraction (Phase 2: extract node) ---
-    structured_info: Optional[StructuredInfo]
+    # Store plain data in checkpoints. Pydantic is used at the LLM boundary,
+    # then converted to dict to keep msgpack deserialization future-proof.
+    structured_info: Optional[dict]
 
     # --- Template routing (Phase 2: route_template node) ---
     template_type: Optional[str]         # "技术型" | "业务型" | "混合型"
@@ -49,8 +51,9 @@ class AgentState(TypedDict, total=False):
     polished: Optional[str]
 
     # --- Human-in-the-loop (Phase 4: review node via interrupt()) ---
-    human_decision: Optional[str]        # Literal["approve", "revise", "edit"]
+    human_decision: Optional[str]        # "approve" | "revise" | "review"
     human_feedback: Optional[str]
+    feedback_history: list[str]          # All accepted revision requests, in order
     edited_text: Optional[str]           # User's inline edits from review UI (overrides polished)
 
     # --- Revision loop guard (Phase 1: revise node increments this) ---
@@ -59,10 +62,14 @@ class AgentState(TypedDict, total=False):
     # --- Enrichment (Phase 3: enrich node) ---
     git_log: Optional[str]
     repo_path: Optional[str]
+    git_author: Optional[str]       # Git author/email filter; avoids claiming teammates' commits
+    timezone: Optional[str]         # IANA timezone used for the local work-day boundary
     data_input: Optional[str]      # NEW (D-05): user's pasted numeric/tabular text
     data_summary: Optional[str]    # NEW (D-06): LLM-extracted key metrics from data_input
 
     # --- Final output (Phase 5: save node) ---
+    date: Optional[str]
+    report_id: Optional[str]
     final_report: Optional[str]
     export_path: Optional[str]
     _saved: bool                        # Idempotent guard — prevents duplicate saves on rerun

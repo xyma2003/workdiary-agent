@@ -7,6 +7,7 @@ import typing
 import pytest
 
 from workdiary_agent.graph import build_graph, route_after_revise
+from workdiary_agent.nodes.extract import extract_node
 from workdiary_agent.state import AgentState
 
 
@@ -35,6 +36,19 @@ def test_agent_state_fields():
     assert not missing, f"AgentState missing fields: {missing}"
 
 
+def test_empty_extract_result_is_checkpoint_safe():
+    """Even the no-input fast path stores plain data, not a custom object."""
+    result = extract_node({"raw_input": ""})
+    assert result == {
+        "structured_info": {
+            "tasks": [],
+            "outputs": [],
+            "blockers": [],
+            "progress": "",
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # SC-2: All 8 node names present in the compiled graph
 # ---------------------------------------------------------------------------
@@ -58,23 +72,17 @@ def test_all_nodes_present():
 
 
 # ---------------------------------------------------------------------------
-# SC-3: Conditional edge respects revision_count
+# SC-3: An accepted revision is always polished before returning to review
 # ---------------------------------------------------------------------------
 
 def test_conditional_edge_logic():
-    """route_after_revise must route to 'polish' unless revision_count >= 3.
-
-    Phase 4 (D-06/D-07): destination changed from 'review' to 'polish' to support
-    the revise→polish→review loop. Guard logic (count >= 3 → save) is unchanged.
-    """
-    # Under limit — routes to polish for another revision pass
+    """route_after_revise always applies feedback; only review can approve saving."""
     assert route_after_revise({"revision_count": 0}) == "polish"
     assert route_after_revise({"revision_count": 1}) == "polish"
     assert route_after_revise({"revision_count": 2}) == "polish"
-    # At limit — force exit to save
-    assert route_after_revise({"revision_count": 3}) == "save"
-    # Over limit
-    assert route_after_revise({"revision_count": 4}) == "save"
+    # Accepted revisions are always applied; the limit is checked before this node.
+    assert route_after_revise({"revision_count": 3}) == "polish"
+    assert route_after_revise({"revision_count": 4}) == "polish"
     # Unset key — total=False TypedDict, must default to 0 via .get()
     assert route_after_revise({}) == "polish"
 
@@ -89,3 +97,6 @@ def test_invoke_no_error():
     config = {"configurable": {"thread_id": "test-1"}}
     result = graph.invoke({"raw_input": "test"}, config)
     assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+
+
+test_invoke_no_error = pytest.mark.integration(test_invoke_no_error)

@@ -2,6 +2,8 @@
 
 > 格式参考 Peppr Ava 题库：每题包含考查点、代码实际方案、理想方案/进步空间、如何表述、亮点/瓶颈、突出能力，以及层层追问。
 > 核心原则：**主动暴露复杂度，主动说出进步空间，而不是等面试官追问。**
+>
+> 更新说明（v0.2）：HITL 上限、feedback 累积、Git 归属、测试隔离和模型配置已完成可靠性重构；以下代码片段以当前仓库为准。
 
 ---
 
@@ -28,9 +30,14 @@ response = interrupt({
     "polished": state.get("polished"),
     "revision_count": state.get("revision_count", 0),
 })
-decision = response.get("decision", "approve")
+decision = response.get("decision", "review")  # malformed payloads never approve
 feedback = response.get("feedback", "")
-return {"human_decision": decision, "human_feedback": feedback}
+return {
+    "human_decision": decision,
+    "human_feedback": feedback,
+    "feedback_history": feedback_history,
+    "edited_text": edited_text,
+}
 ```
 
 `interrupt(payload)` 在节点内部调用时，抛出 `GraphInterrupt` 异常。LangGraph runtime 捕获这个异常，把完整的 `AgentState` 序列化到 `SqliteSaver`（`graph_state.db`），然后让 `graph.invoke()` 返回。此时 `graph.get_state(config).next == ("review",)`，图处于暂停状态。
@@ -104,7 +111,7 @@ if "thread_id" not in st.session_state:
 
 ### 代码中的实际方案
 
-**三个守卫协同工作**
+**修改上限与明确确认协同工作**
 
 **守卫一：安全的字段访问**（`workdiary_agent/nodes/revise.py`）
 ```python
@@ -113,43 +120,39 @@ return {"revision_count": count + 1}
 ```
 `AgentState` 是 `total=False` 的 TypedDict，`state["revision_count"]` 在字段未初始化时会 `KeyError`。用 `state.get()` + 默认值保证安全。
 
-**守卫二：条件边路由**（`workdiary_agent/graph.py`）
+**守卫二：进入 revise 前检查上限**（`workdiary_agent/graph.py`）
 ```python
-def route_after_revise(state: AgentState) -> Literal["polish", "save"]:
-    count = state.get("revision_count", 0)
-    return "save" if count >= 3 else "polish"
-
-builder.add_conditional_edges(
-    "revise",
-    route_after_revise,
-    {"polish": "polish", "save": "save"},
-)
+def route_after_review(state: AgentState):
+    if state.get("human_decision") == "approve":
+        return "save"
+    if state.get("human_decision") == "revise" and state.get("revision_count", 0) < 3:
+        return "revise"
+    return "review"
 ```
-`revision_count >= 3` 时路由到 `save`，强制退出循环。
+达到 3 次后再次 revise 会回到 review，不会跳过用户确认。
 
-**守卫三：review 节点的路由**（`workdiary_agent/graph.py`）
+**守卫三：每次反馈都先应用再审阅**（`workdiary_agent/graph.py`）
 ```python
-def route_after_review(state: AgentState) -> Literal["save", "revise"]:
-    decision = state.get("human_decision", "approve")
-    return "save" if decision == "approve" else "revise"
+def route_after_revise(state: AgentState) -> Literal["polish"]:
+    return "polish"
 ```
-`approve` 直接到 `save`，跳过 revise 节点，不触发计数。
+因此第三次反馈也会经过 polish，然后再次 interrupt；只有 approve 才保存。
 
 **完整循环路径**：
 ```
-polish → review(interrupt) → [approve→save] 或 [revise→revise_node→route_after_revise→polish(count<3) 或 save(count>=3)]
+polish → review(interrupt) → [approve→save] 或 [revise(未达上限)→count+1→polish→review]
 ```
 
 ### 如何对面试官表述
-> "三个守卫协同工作：第一个是字段访问安全，用 state.get() 而不是 state[]，因为 total=False TypedDict 未初始化的键会 KeyError；第二个是 revise 节点的条件边，revision_count >= 3 时路由到 save 强制退出；第三个是 review 节点的条件边，approve 直接到 save 跳过计数。三个守卫缺一不可——少了任何一个都会有 bug。"
+> "修改上限在进入 revise 前检查，进入 revise 后则保证这次反馈一定会执行。第三次修改完成后图仍回到 review，必须由用户明确 approve 才保存，避免旧实现跳过第三次反馈并自动保存旧版本。"
 
 ### 亮点
-- 三个守卫有层次，不是单点保护
+- 将“限制模型调用次数”和“最终内容必须确认”拆成两个独立约束
 - 主动说出 total=False 的坑，证明理解 LangGraph 的状态设计
 
 ### 瓶颈
 - 3 次上限是硬编码，不同场景最优值可能不同，可以做成配置项
-- 第三次强制退出时用户没有明确确认，可能体验不够友好（可以在 save_node 里加提示）
+- 3 次上限仍是硬编码配置，后续可以按用户或模型成本配置
 
 ### 突出的能力
 **状态机边界条件设计** + **LangGraph TypedDict 的深度理解**
@@ -187,7 +190,7 @@ class TemplateRouterAgent:
 - `analyze_content_node`：提取内容特征（有多少技术内容/业务内容）
 - `decide_template_node`：根据特征决策模板类型
 
-类似 chain-of-thought 的效果——先显式提取特征，再基于特征决策，比直接问"这是哪种模板"更准确，也更容易 debug（可以单独看 analyze 步骤的输出）。
+这是可观测的分步分类——先显式提取特征，再基于特征决策，便于单独检查 analyze 步骤；是否比单次分类更准确仍需评测验证。
 
 **和 supervisor 模式的区别**：
 - Supervisor 模式：一个 Agent 动态分派给多个 Worker，Worker 可以并行，适合任务分解
@@ -196,13 +199,13 @@ class TemplateRouterAgent:
 这个项目用子图而不是 supervisor，因为路由逻辑是静态的——每次都需要分类，不需要动态决定是否调用。
 
 ### 如何对面试官表述
-> "分两步是因为直接问'这是哪种模板'准确率不够高。先让一个节点提取内容特征，再让另一个节点基于特征决策，类似 chain-of-thought，效果更好也更容易 debug。
+> "路由分两步：先提取内容特征，再基于特征决策，因此中间结果可观察、bad case 更容易定位。当前还没有证明它比单步分类更准确，这需要标注集评测。
 >
 > 做成独立子图是为了解耦——有自己的 RouterState，主图只关心 classify() 接口，内部实现可以随时替换。这不是 supervisor 模式，而是静态的子图组合，因为路由逻辑每次都要执行，不需要动态分派。"
 
 ### 亮点
 - 能区分子图和 supervisor 模式，说明对 Multi-Agent 架构有系统理解
-- 两步走的设计有明确的准确率驱动
+- 两步走强调可观测性，并明确保留了准确率评测缺口
 
 ### 瓶颈
 - 两步 LLM 调用比一步慢，增加了延迟和成本
@@ -211,7 +214,7 @@ class TemplateRouterAgent:
 **进步空间**：可以收集线上分类结果，用 LLM 做二次评判，统计各类型的准确率，形成自动化评测闭环（类似 Peppr 的菜单评估系统）。
 
 ### 突出的能力
-**Multi-Agent 架构设计** + **分步推理的准确率意识**
+**子图架构设计** + **可评测意识**
 
 ---
 
@@ -409,7 +412,7 @@ repo = git.Repo(safe_path)
 
 ### 代码中的实际方案
 
-**TDD 驱动**：每个 Phase 先写 RED 测试，再写实现，再看 GREEN。33 个测试，覆盖全部 Phase 的验收标准。
+**TDD 驱动**：离线测试默认不需要 API Key；真实模型检查统一标记为 `integration`，避免 CI 意外产生模型调用与费用。
 
 **LLM 调用的 mock 策略**
 
@@ -426,7 +429,7 @@ def _mock_all_llm_nodes():
     ]
 ```
 
-mock 的 `_make_llm_mock()` 返回真实的 `StructuredInfo` Pydantic 对象（不是 MagicMock），因为 LangGraph 的 msgpack checkpointer 无法序列化 MagicMock，会导致 interrupt/resume 测试失败。
+mock 的 `_make_llm_mock()` 在 LLM 边界返回真实 `StructuredInfo`，`extract_node` 随即调用 `model_dump()` 转成普通 dict，再写入 checkpoint。这样既验证结构化输出，又避免持久化自定义类型的未来兼容风险。
 
 **HITL 循环的测试**
 
@@ -440,12 +443,12 @@ def test_approve_path():
         result2 = graph.invoke(Command(resume={"decision": "approve", "feedback": ""}), config)
         assert not graph.get_state(config).next  # SC-2: 到达 END
 
-def test_force_exit_after_3_revisions():
-    # 连续 revise 3 次，第 4 次不再 interrupt
+def test_three_revisions_still_require_approval():
+    # 连续 revise 3 次，每次都生效并回到 review，最后 approve 才保存
 ```
 
 **独立验证脚本**（ROADMAP SC-5 要求）：
-`scripts/test_hitl_cycle.py` 用 `InMemorySaver`（不写磁盘），跑 3 条路径的真实调用，最终输出 `ALL 3 PATHS PASSED`。
+`scripts/test_hitl_cycle.py` 用 `InMemorySaver`（不写磁盘）和 mock LLM，跑 3 条完整图路径，最终输出 `ALL 3 PATHS PASSED`。
 
 **为什么 mock 而不是真实调用**：
 - 速度：每次测试省几十秒
@@ -453,9 +456,9 @@ def test_force_exit_after_3_revisions():
 - 可重复性：LLM 输出不稳定，不能作为断言基准
 
 ### 如何对面试官表述
-> "TDD 驱动，33 个测试覆盖全部 Phase。LLM 调用全部 mock，在使用处 patch make_llm()——这里有个细节：mock 返回的必须是真实的 Pydantic 对象，不能是 MagicMock，因为 LangGraph 的 checkpointer 序列化时会失败。
+> "默认 CI 只跑不需要凭证的离线测试，真实模型测试用 integration marker 隔离。结构化 LLM mock 返回 Pydantic 对象，但进入 checkpoint 前转换成普通 dict，避免序列化兼容风险。
 >
-> HITL 循环专门有 3 条路径的集成测试：直接 approve、revise 一次后 approve、连续 3 次 revise 强制退出。还有独立的验证脚本调用真实 LLM，但只在手动验收时跑，不进 CI。"
+> HITL 循环覆盖直接 approve、revise 一次后 approve、连续 3 次 revise 后明确 approve；GitHub Actions 会自动跑整套离线回归。"
 
 ### 亮点
 - mock 策略有工程细节（Pydantic 对象 vs MagicMock），证明是真实踩过的
@@ -489,29 +492,26 @@ def test_force_exit_after_3_revisions():
 - `workdiary_agent/router/agent.py`
 
 **重构后**：提取到 `workdiary_agent/utils.py`，公开名为 `make_llm()`（去掉下划线，变成公共 API）：
-```python
-def make_llm() -> ChatAnthropic:
-    """Return ChatAnthropic with custom headers from ANTHROPIC_CUSTOM_HEADERS env var."""
-    ...
-```
+`make_llm()` 根据显式的 `LLM_PROVIDER` 创建 SiliconFlow、官方 OpenAI、其他
+OpenAI-compatible 或 Anthropic 客户端，并统一设置超时和基础重试。
 
 各节点改为 `from ..utils import make_llm`，调用处改为 `llm = make_llm()`。
 
 **重构的连锁影响**：测试文件里的 mock 路径也需要更新，从 `workdiary_agent.nodes.extract._make_llm` 改为 `workdiary_agent.nodes.extract.make_llm`（在使用处 patch，不是在定义处 patch）。
 
-**净效果**：删除 131 行重复代码，新增 69 行，净减 62 行。
+**净效果**：供应商选择、凭证隔离、超时和重试参数集中在一个边界维护。
 
 ### 如何对面试官表述
 > "项目完成后做了一次代码审查，发现 _make_llm() 在 5 个文件里各有一份完全相同的实现。这是项目快速迭代的副产品——每个 Phase 的 executor agent 独立实现节点，各自复制了这个 helper。
 >
-> 重构时有两个注意点：一是函数名从 _make_llm 改成 make_llm，因为它现在是公共 API；二是测试文件里的 mock 路径要同步更新，因为 Python 的 patch 是在使用处拦截，不是在定义处。最终净减 62 行代码，测试全部通过。"
+> 重构时有两个注意点：一是函数名从 _make_llm 改成 make_llm，因为它现在是公共 API；二是测试文件里的 mock 路径要同步更新，因为 Python 的 patch 是在使用处拦截，不是在定义处。随后又把凭证隔离、超时和基础重试统一放进这个边界。"
 
 ### 亮点
 - 说清楚了重构的连锁影响（mock 路径），证明理解 Python 的 patch 机制
 - 说出了重复出现的原因（多个 executor agent 独立实现），有自我反思
 
 ### 瓶颈
-- 重构只解决了代码重复，没有解决 LLM 调用没有重试的问题
+- SDK 层已有基础重试，但还没有面向整条工作流的降级与恢复
 - `make_llm()` 每次调用都创建新实例，没有连接池或缓存，高频调用有开销
 
 **进步空间**：可以在 `utils.py` 里加 LLM 调用的重试包装：
@@ -615,15 +615,15 @@ for template_type in ["技术型", "业务型", "混合型"]:
 
 **P0（应该修但没修的）：**
 
-**1. LLM 调用没有重试**
-`make_llm().invoke()` 直接调用，API 限流或超时时直接报错，没有任何保护。生产环境不可接受。
+**1. LLM 调用具备基础超时和 SDK 重试，但还缺少端到端降级**
+`make_llm()` 已统一配置 `LLM_TIMEOUT_SECONDS` 与 `LLM_MAX_RETRIES`。仍缺少按错误类型区分的退避策略、熔断和用户可恢复入口。
 
 **2. TemplateRouterAgent 没有评测**（见 Q9）
 
 **P1（有进步空间的）：**
 
-**3. Streamlit 是同步阻塞的**
-用户点「生成日报」后，整个 UI 冻结直到图执行完（通常 10-30 秒）。体验不好。v2 可以用异步 + streaming 改善。
+**3. 只有节点级进度，没有 token 级流式正文**
+UI 已随真实节点事件更新状态，但单个 LLM 节点内部仍同步等待。v2 可以增加 token streaming 与取消能力。
 
 **4. 错误信息对用户不友好**（已修复）
 原始代码 `st.error(f"图执行出错: {e}")` 直接暴露系统内部信息。已改为通用提示 + `logging.exception()` 记录详情。
@@ -636,10 +636,10 @@ for template_type in ["技术型", "业务型", "混合型"]:
 
 **功能层面**：
 - 在 Streamlit 里加 streaming 输出，让用户看到日报逐步生成
-- 加 LLM 调用的重试和超时控制
+- 补充按错误类型区分的退避、熔断与恢复机制
 
 ### 如何对面试官表述
-> "有三个明显的技术债：第一，LLM 调用没有重试，API 限流时直接崩，生产环境不行；第二，模板分类没有评测，准确率未知；第三，Streamlit 同步阻塞，生成期间 UI 冻结，体验差。
+> "有三个明显的技术债：第一，LLM 虽有基础超时和 SDK 重试，但缺少端到端降级与恢复；第二，模板分类没有评测，准确率未知；第三，节点进度已可见，但正文仍不是 token 级流式输出。
 >
 > 如果再做一次，我会在 Phase 1 就把 make_llm() 放在 utils.py，因为我知道每个节点都会用到它。这次是因为 executor agent 独立实现各节点，最后才发现重复——这是多 agent 并行开发的副产品，下次会在 Phase 1 的架构设计里预先规划共享工具层。"
 
@@ -668,9 +668,17 @@ for template_type in ["技术型", "业务型", "混合型"]:
 
 LangGraph 节点返回的 dict 是**部分更新**，只更新返回的字段，不清空其他字段。
 
-`review_node`（`workdiary_agent/nodes/review.py:42`）：
+`review_node` 会同时保留当前 feedback 与完整历史：
 ```python
-return {"human_decision": decision, "human_feedback": feedback}
+feedback_history = list(state.get("feedback_history", []))
+if decision == "revise" and feedback:
+    feedback_history.append(feedback)
+return {
+    "human_decision": decision,
+    "human_feedback": feedback,
+    "feedback_history": feedback_history,
+    "edited_text": edited_text,
+}
 ```
 
 第一次 revise：`human_feedback = "请加强量化指标"`，写入 state。
@@ -682,50 +690,31 @@ Polish 节点读取并用掉这个 feedback，生成新的 `polished`。
 Command(resume={"decision": "revise", "feedback": "语气太正式，改得自然一点"})
 ```
 
-review_node 返回 `{"human_decision": "revise", "human_feedback": "语气太正式，改得自然一点"}`，**覆盖**了第一次的 feedback。
+review_node 将第二条意见追加到 `feedback_history`。`polish_node` 使用用户当前编辑文本作为基稿，并把完整历史按顺序注入 prompt，后面的意见优先级更高。
 
-**所以：feedback 是覆盖，不是累积。**
-
-`polish_node`（`workdiary_agent/nodes/polish.py:54-56`）每次只读当前 state 中的 `human_feedback`，不会看到历史的 feedback。
+**所以：修改基稿和约束都是连续累积的。**
 
 ### 这个设计的隐患
 
-**场景**：用户第一次说"加量化指标"，第二次说"语气自然一点"。第二次 polish 时，第一次的"加量化指标"这个需求就被覆盖了，LLM 可能不再关注量化指标。
-
-**代码中没有处理这个问题**。
+**场景**：用户第一次说"加量化指标"，第二次说"语气自然一点"。第二次 polish 同时看到两条历史要求，并基于上一次已修改的文本继续工作。
 
 ### 理想方案
 
-两个选项：
-
-**选项一：累积 feedback（追加而非覆盖）**
+当前实现采用列表累积，并在 polish 的 HumanMessage 中注入历史：
 ```python
-# review_node 中
-existing_feedback = state.get("human_feedback", "")
-new_feedback = response.get("feedback", "")
-combined = f"{existing_feedback}\n{new_feedback}".strip() if existing_feedback else new_feedback
-return {"human_decision": decision, "human_feedback": combined}
+feedback_history = state.get("feedback_history", [])
+numbered_feedback = "\n".join(
+    f"{index}. {feedback}"
+    for index, feedback in enumerate(feedback_history, start=1)
+)
 ```
-
-**选项二：在 polish 的 HumanMessage 里注入 feedback 历史**
-```python
-# polish_node 中
-feedback_history = state.get("feedback_history", [])  # 新增字段
-if human_feedback:
-    context = f"历史修改意见：\n" + "\n".join(f"- {f}" for f in feedback_history)
-    context += f"\n本次修改意见：{human_feedback}"
-```
-
-当前实现选了最简单的方案（覆盖），对大多数场景够用，但面试时要主动说出这个 trade-off。
 
 ### 如何对面试官表述
-> "LangGraph 的状态更新是 merge 语义，节点返回的 dict 只更新对应字段，不清空其他字段。但 review_node 每次都写 human_feedback 字段，所以是覆盖而不是累积。第二次 revise 时，第一次的 feedback 就丢了。
->
-> 这个设计对大多数场景够用——用户通常每次只关注一个问题。但如果用户的两次 feedback 是正交的需求，第二次 polish 可能忽略第一次的要求。改进方案是把 feedback 改成列表字段累积，或者在 polish 的 prompt 里注入所有历史 feedback。"
+> "LangGraph 的状态更新是 merge 语义，因此不能只依赖单个 human_feedback 字段。当前实现显式维护 feedback_history，并将用户 inline edit 作为下一轮基稿；这样连续修改既保留文本结果，也保留约束历史。"
 
 ### 亮点
 - 说清楚了 LangGraph 状态更新的 merge 语义，不只是说"会覆盖"
-- 主动识别多轮场景下的信息丢失问题
+- 修复多轮场景下的基稿与约束信息丢失问题
 
 ### 瓶颈
 - 累积 feedback 会让 prompt 越来越长，多轮后可能超过 token 限制
@@ -740,29 +729,19 @@ if human_feedback:
 
 **会丢失，这是一个设计缺陷。**
 
-`app.py:207-208`：
+UI 在 revise 时把当前编辑内容一并传回图：
 ```python
-if st.button("↻ 重新生成", use_container_width=True, key="revise_btn"):
-    st.session_state._show_feedback = True
-    # 注意：没有保存 session_state["edit_area"] 的内容
+Command(resume={
+    "decision": "revise",
+    "feedback": feedback.strip(),
+    "edited_text": current_text,
+})
 ```
-
-用户在 `edit_area` 里做的修改存在 `session_state["edit_area"]`，但点「重新生成」时没有把它存起来。`Command(resume={"decision": "revise", ...})` 之后图重新跑 polish，返回全新的 `polished`，覆盖掉 `session_state.result["polished"]`，用户的编辑就丢失了。
-
-**修复方案**：在点「重新生成」时，把 `edit_area` 的内容作为额外的 feedback 传进去：
-```python
-if st.button("↻ 重新生成"):
-    edited = st.session_state.get("edit_area", "")
-    original = result.get("polished", "")
-    if edited != original:
-        # 用户有编辑，把编辑内容作为 feedback 的一部分
-        st.session_state._pending_edit = edited
-    st.session_state._show_feedback = True
-```
+`polish_node` 优先使用 `edited_text`，因此用户手工修改不会在重新生成时丢失。编辑框 key 还包含 `thread_id + revision_count`，新一轮结果不会被旧 Streamlit widget state 覆盖。
 
 ---
 
-## Q12：`st.status` 里的节点标签是在图执行前就全部写出来的，这意味着什么？
+## Q12：`st.status` 如何展示真实节点进度？
 
 *（也可能被问成：用户看到的进度标签是实时的吗？如果某个节点失败了，标签会显示错误吗？）*
 
@@ -770,54 +749,25 @@ if st.button("↻ 重新生成"):
 考查点：**Streamlit 执行模型的理解**，以及流式 UI vs 批量 UI 的设计权衡。
 
 ### 代码中的实际方案
-
-`app.py:110-114`：
 ```python
 with st.status("正在生成日报...", expanded=True) as status_ui:
-    for label in NODE_LABELS.values():
-        st.write(label)           # ← 在 invoke() 之前把所有标签全写出来
-
-    try:
-        result = get_graph().invoke(...)   # ← 阻塞调用，图在这里执行
+    for update in graph.stream(graph_input, config, stream_mode="updates"):
+        for node_name in update:
+            if node_name in NODE_LABELS:
+                status_ui.write(NODE_LABELS[node_name])
 ```
-
-**这意味着**：所有节点标签（"正在提取信息..."、"正在润色..."等）在图开始执行之前就已经渲染完了。用户看到的是一个静态的标签列表，不是节点逐一完成时的实时更新。
-
-**视觉效果**：用户点击「生成日报」后，立刻看到所有标签同时出现，然后等待图执行完成。这不是真正的进度条，而是"预告"。
-
-**为什么这样设计**：`graph.invoke()` 是同步阻塞调用，执行期间 Streamlit 无法更新 UI（Python 单线程）。要做真正的实时进度更新，需要用 `graph.stream()` + `st.empty()` 的异步模式。
-
-### 理想方案（真正的实时进度）
-
-```python
-with st.status("正在生成日报...", expanded=True) as status_ui:
-    progress_placeholder = st.empty()
-
-    for chunk in get_graph().stream({"raw_input": raw_input, ...}, config):
-        # chunk 是 {节点名: 节点输出} 的字典
-        node_name = list(chunk.keys())[0]
-        label = NODE_LABELS.get(node_name, f"正在执行 {node_name}...")
-        progress_placeholder.write(f"✓ {label}")
-
-    status_ui.update(label="生成完成", state="complete")
-```
-
-`graph.stream()` 每个节点完成时 yield 一个 chunk，可以实现真正的逐节点进度更新。
-
-**但 stream() 和 interrupt() 的配合有坑**：stream() 在遇到 interrupt 时会 yield 一个包含 `__interrupt__` 键的 chunk，然后停止。需要特殊处理这个 chunk 来检测暂停状态。
+`graph.stream()` 在节点完成时产生 update；遇到 interrupt 时会产生 `__interrupt__`，辅助函数提取 payload 后再通过 `get_state()` 判断是否暂停在 review。
 
 ### 如何对面试官表述
-> "当前的进度标签是在 invoke() 之前一次性全写出来的，不是实时更新的。因为 invoke() 是阻塞调用，执行期间 Streamlit 无法更新 UI。用户看到的是'预告'，不是真正的进度条。
->
-> 要做真正的实时进度，需要换成 graph.stream()，每个节点完成时 yield 一个 chunk，再用 st.empty() 逐步更新。但 stream() 和 interrupt() 配合有额外的处理逻辑，复杂度更高，当前 scope 内没做。"
+> "UI 消费 graph.stream(stream_mode='updates') 的真实节点事件，而不是预先打印静态标签。interrupt chunk 单独解析，最终仍以 checkpoint 中的 state.next 判断暂停状态。"
 
 ### 亮点
-- 说清楚了"假进度条"的本质，而不是假装它是实时的
-- 知道 stream() 的存在和使用场景
+- 真实节点事件驱动 UI，而不是模拟进度
+- 正确处理 stream 与 interrupt/checkpoint 的组合
 
 ### 瓶颈
-- 图执行期间（10-30秒）UI 完全冻结，用户体验差
-- 没有超时机制，如果 LLM API 不响应，用户会一直等待
+- 当前仍是同步节点流，不支持取消单个正在执行的 LLM 请求
+- timeout/retry 已配置，但尚未记录每个节点的 latency
 
 ### 突出的能力
 **Streamlit 执行模型的深度理解** + **流式 UI 的设计意识**
@@ -833,44 +783,20 @@ with st.status("正在生成日报...", expanded=True) as status_ui:
 
 ### 代码中的实际方案
 
-`workdiary_agent/nodes/enrich.py:55-56`：
+系统优先使用用户配置的 IANA 时区，否则回退到机器本地时区：
 ```python
-today = datetime.combine(date.today(), datetime.min.time())
-commits = list(repo.iter_commits(since=today.isoformat()))
+tz = _resolve_timezone(timezone_name)
+now = datetime.now(tz)
+start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+end = start + timedelta(days=1)
+commits = repo.iter_commits(
+    since=start.isoformat(), until=end.isoformat(), author=author
+)
 ```
-
-**`datetime.min.time()` 是 `time(0, 0, 0)`**，即当天的 00:00:00。
-
-**`today.isoformat()` 生成的字符串**：`"2026-04-28T00:00:00"`，**不含时区信息**。
-
-**问题**：
-- `date.today()` 返回的是**运行进程的本地时区**的日期
-- `isoformat()` 生成的字符串不含时区，git 会用**系统时区**解释它
-- 如果服务器在 UTC（0时区），用户在中国（UTC+8），`date.today()` 是 UTC 的今天
-- 中国用户在 UTC+8 的 09:00 产生的 commit，对应 UTC 的 01:00，在 UTC 的"今天"里
-- 但中国用户在 UTC+8 的 00:30（即 UTC 的前一天 16:30）产生的 commit，会被错误地排除
-
-**实际影响**：在本地开发（服务器和用户同时区）时不会有问题。在云部署（服务器 UTC，用户 UTC+8）时，每天最早的 8 小时内的 commits 可能被错误读取或遗漏。
-
-### 理想方案
-
-```python
-from datetime import datetime, date, timezone, timedelta
-
-# 方案1：使用 UTC，让 git 统一用 UTC 解释
-today_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-commits = list(repo.iter_commits(since=today_utc.isoformat()))
-
-# 方案2：让用户指定时区（更精确）
-user_tz = timezone(timedelta(hours=8))  # 从配置读取
-today_local = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
-commits = list(repo.iter_commits(since=today_local.isoformat()))
-```
+除了修正日期边界，还必须按作者过滤；若既没有用户输入作者、仓库也没有 `user.email/name`，系统宁可跳过 Git 增强，也不会把全部提交归到当前用户。
 
 ### 如何对面试官表述
-> "datetime.min.time() 是 time(0,0,0)，就是当天的零点。isoformat() 生成不含时区的字符串，git 用系统时区解释。
->
-> 问题在于：如果服务器在 UTC，用户在中国 UTC+8，中国用户在凌晨 00:30 产生的 commit 对应 UTC 前一天 16:30，会被排除在'今天'之外。这是个真实的 bug，在本地开发时不会暴露，部署到云端才会出现。修复方案是用 timezone-aware 的 datetime，或者从配置读取用户时区。"
+> "Git enrichment 使用用户时区构造 timezone-aware 的起止边界，同时按作者过滤。拿不到作者身份时选择不增强，因为遗漏上下文比错误认领同事工作更安全。"
 
 ### 亮点
 - 说清楚了 `datetime.min.time()` 的含义，不是模糊带过

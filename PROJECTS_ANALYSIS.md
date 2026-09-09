@@ -3,7 +3,7 @@
 > 本文档记录三个 portfolio 项目的技术亮点、架构设计、Idea 创新点，以及后续优化思考。
 > 面试备用，持续更新。
 >
-> 最后更新：2026-04-29
+> 最后更新：2026-09-09
 
 ---
 
@@ -227,18 +227,18 @@ route_divergence
 3. 分类日报模板（技术型/业务型/混合型）
 4. 生成初稿 → 从老板视角润色
 5. **暂停，让用户审阅、编辑、反馈**（HITL interrupt）
-6. 最多 3 次修改循环后保存，导出 markdown
+6. 最多应用 3 次模型修改，用户明确接受后保存并导出 markdown
 
 ### 技术亮点
 
 **完整 HITL interrupt/resume（LangGraph 高级用法）：**
 ```python
 # review 节点内
-payload = interrupt({"draft": state["polished_draft"], "version": state["revision_count"]})
+payload = interrupt({"polished": state["polished"], "revision_count": state.get("revision_count", 0)})
 # → 抛出 GraphInterrupt，LangGraph runtime 序列化完整 state 到 SqliteSaver，图暂停
 
 # 用户操作后恢复
-graph.invoke(Command(resume={"action": "approve"}), config={"configurable": {"thread_id": tid}})
+graph.invoke(Command(resume={"decision": "approve"}), config={"configurable": {"thread_id": tid}})
 # → 从 SqliteSaver 加载状态，从 review 节点继续
 ```
 - 踩坑 1：`GraphInterrupt` 是 Exception 子类，不能被 `except Exception:` 吞掉
@@ -259,10 +259,11 @@ if "thread_id" not in st.session_state:  # thread_id 只初始化一次
     st.session_state.thread_id = str(uuid.uuid4())
 ```
 
-**三重循环守卫 — 防止无限修改：**
+**显式确认的修改上限：**
 1. `state.get("revision_count", 0)` 安全访问，默认 0
-2. 条件边：`count >= 3 → save`（跳过 review 直接保存）
-3. approve 路径：直接跳到 save，不经过计数
+2. 前 3 次 revise 都先执行 `polish`，再回到 review
+3. 达到上限后禁用模型修改，但仍可手工编辑
+4. 只有明确 approve 才进入 save，绝不自动保存旧版本
 
 ### 架构亮点
 
@@ -272,7 +273,7 @@ analyze_content_node (提取技术/业务内容比例)
        ↓
 decide_template_node (基于特征决策模板类型)
 ```
-- 两步 chain-of-thought 比单次决策准确率更高
+- 两步分类把分析与决策解耦；是否优于单次决策仍需 Benchmark 验证
 - 独立的 `RouterState`，与主图完全解耦，内部实现可随时替换
 - 对比 Supervisor 模式：子图是静态组合，每次都执行，适合封装复杂子流程
 
@@ -295,26 +296,30 @@ END
 - 加第 4 种模板只需改 4 处：`draft.py`, `router/agent.py`, `route_template.py`, `tests`
 - 其他层对模板类型透明，松耦合设计
 
-**安全意识：**
-- git 路径用 `pathlib.Path.resolve()` 规范化，防止路径遍历攻击
+**可信 Git 归属：**
+- git 路径先规范化并校验为目录
+- 按用户填写或仓库配置的 Git 作者过滤，避免把同事提交写进个人日报
+- 使用用户时区计算工作日边界，并限制最多读取 100 条提交
 
 ### 已知 Bug / 技术债
 
-**P0（应该修的）：**
-- LLM 调用没有重试——API 限流或超时时直接报错，无任何保护
-- TemplateRouterAgent 没有系统评测——分类准确率没有量化指标
+**已修复（v0.2）：**
+- 三次修改均会实际执行，最终保存必须由用户明确确认
+- 多轮 feedback 累积，用户 inline edit 会成为下一轮修改基稿
+- `st.status` 改为消费 LangGraph stream 的真实节点更新
+- Git 提交按作者和用户时区过滤
+- 同日多份报告使用 report_id 隔离，SQLite 保存支持幂等重试
+- 模型供应商与 API Key 显式绑定，并增加 timeout/retry
 
-**P1（设计缺陷）：**
-- **Inline edit 数据不一致**：用户在 UI 编辑的内容只存在 `session_state`，没有传回图，`history.db` 里存的是未编辑版本
-- **Revision feedback 被覆盖**：多轮修改时新 feedback 覆盖旧 feedback，第一次修改意见可能被遗忘
-- **进度条是假的**：`st.status` 里的节点标签在 `invoke()` 之前全部写出，不是实时更新
-- **时区 bug（隐藏）**：`enrich.py` 里 `datetime.combine(date.today(), ...).isoformat()` 无时区信息，云部署 UTC 服务器 + UTC+8 用户时会漏掉当天早晨的 commits
+**仍待完成：**
+- TemplateRouterAgent 没有系统评测，分类准确率没有量化指标
+- 缺少报告事实一致性校验、质量 Benchmark 和成本/延迟统计
 
 ### TDD 策略
 
-- 33 个测试，5 个文件覆盖全部阶段
-- LLM mock 必须返回真实 Pydantic 对象，不能用 MagicMock（checkpointer 无法序列化）
-- HITL 循环测 3 条路径：直接 approve / revise 一次后 approve / 连续 3 次 revise 强制保存
+- 离线测试不需要 API Key；真实模型检查使用 `integration` marker 隔离
+- Pydantic 只用于 LLM 结构化输出边界，进入 checkpoint 前转为普通 dict
+- HITL 循环覆盖：直接 approve / revise 一次后 approve / 连续 3 次 revise 后明确 approve
 
 ### Idea 亮点
 
@@ -324,7 +329,7 @@ END
 
 ### 面试表述建议
 
-> "这个项目的核心技术挑战是 Human-in-the-Loop 的完整实现。LangGraph 的 interrupt() 会抛出 GraphInterrupt 异常，runtime 把完整的图状态序列化到 SqliteSaver，图暂停。用户在 Streamlit 审阅后，用 Command(resume=...) 加同一个 thread_id 恢复。有三个坑踩过：GraphInterrupt 不能被 except Exception 吞掉、SqliteSaver 要用 with 语法、get_state().next 是 tuple。"
+> "这个项目的核心技术挑战是 Human-in-the-Loop 的完整实现。LangGraph 的 interrupt() 会抛出 GraphInterrupt 异常，runtime 把完整的图状态序列化到 SqliteSaver，图暂停。用户在 Streamlit 审阅后，用 Command(resume=...) 加同一个 thread_id 恢复。有三个坑踩过：GraphInterrupt 不能被 except Exception 吞掉、SqliteSaver.from_conn_string() 必须作为 context manager 使用、get_state().next 是 tuple。"
 >
 > "两个 SQLite 文件的分离也是刻意设计的——graph_state.db 是 LangGraph 独占的，schema 固定，混入业务数据会破坏序列化。"
 

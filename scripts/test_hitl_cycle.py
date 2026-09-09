@@ -7,10 +7,10 @@ Python script (not Streamlit) before this phase is declared done."
 Demonstrates all 3 paths:
   Path 1 — Approve directly: invoke → approve → final_report + END
   Path 2 — Revise once then approve: invoke → revise(×1) → loop pause → approve → END
-  Path 3 — Force-exit after 3 revisions: invoke → revise(×3) → END (no 4th interrupt)
+  Path 3 — Apply 3 revisions: invoke → revise(×3) → review → approve → END
 
 Uses InMemorySaver (build_graph() default) with LLM nodes mocked to avoid API calls.
-Run: conda run -n llm-data-pipeline python scripts/test_hitl_cycle.py
+Run: python scripts/test_hitl_cycle.py
 """
 import sys
 import os
@@ -50,12 +50,12 @@ def _make_llm_mock(return_text: str = "polished draft content") -> MagicMock:
 def _all_llm_patches():
     """Return list of context managers that mock all LLM-calling nodes."""
     return [
-        patch("workdiary_agent.nodes.extract._make_llm", return_value=_make_llm_mock()),
-        patch("workdiary_agent.nodes.draft._make_llm",
+        patch("workdiary_agent.nodes.extract.make_llm", return_value=_make_llm_mock()),
+        patch("workdiary_agent.nodes.draft.make_llm",
               return_value=_make_llm_mock("【已选用混合型模板】\n日报初稿")),
-        patch("workdiary_agent.nodes.polish._make_llm",
+        patch("workdiary_agent.nodes.polish.make_llm",
               return_value=_make_llm_mock("polished: 完成登录模块，覆盖核心业务流程")),
-        patch("workdiary_agent.nodes.enrich._make_llm", return_value=_make_llm_mock()),
+        patch("workdiary_agent.nodes.enrich.make_llm", return_value=_make_llm_mock()),
         patch("workdiary_agent.nodes.route_template.TemplateRouterAgent.classify",
               return_value="混合型"),
     ]
@@ -133,7 +133,7 @@ def test_path2_revise_then_approve():
 
     # First revise — polish is called again, so mock it
     polish_patch = patch(
-        "workdiary_agent.nodes.polish._make_llm",
+        "workdiary_agent.nodes.polish.make_llm",
         return_value=_make_llm_mock("revised: 完成登录模块，优化了安全性"),
     )
     with polish_patch:
@@ -159,11 +159,11 @@ def test_path2_revise_then_approve():
 
 
 # ---------------------------------------------------------------------------
-# Path 3: Force-exit after 3 revisions
+# Path 3: Apply all 3 revisions, then require approval
 # ---------------------------------------------------------------------------
 
-def test_path3_force_exit():
-    """SC-4: invoke → revise(×3) → force-exits to save → END without 4th interrupt."""
+def test_path3_three_revisions_then_approve():
+    """SC-4: third revision is applied and explicit approval is still required."""
     g = build_graph()
     cfg = {"configurable": {"thread_id": "hitl-path3"}}
 
@@ -176,7 +176,7 @@ def test_path3_force_exit():
 
     for i in range(3):
         polish_patch = patch(
-            "workdiary_agent.nodes.polish._make_llm",
+            "workdiary_agent.nodes.polish.make_llm",
             return_value=_make_llm_mock(f"revision {i+1}: 完成登录模块"),
         )
         with polish_patch:
@@ -185,31 +185,23 @@ def test_path3_force_exit():
                 cfg,
             )
         state_mid = g.get_state(cfg)
-        if i < 2:
-            # After 1st and 2nd revise: still paused at review
-            assert "review" in state_mid.next, (
-                f"FAIL Path3: after revise {i+1} expected paused at review, "
-                f"got {state_mid.next}"
-            )
-            print(f"  Revise {i+1}: still paused at review (revision_count={state_mid.values.get('revision_count', 0)})")
-        else:
-            # After 3rd revise: should be at END (force-exit)
-            assert not state_mid.next, (
-                f"FAIL Path3: after 3rd revise expected END, got {state_mid.next}. "
-                "route_after_revise guard (count>=3->save) may not be working."
-            )
+        assert "review" in state_mid.next, (
+            f"FAIL Path3: after revise {i+1} expected paused at review, "
+            f"got {state_mid.next}"
+        )
+        print(f"  Revise {i+1}: paused at review (revision_count={state_mid.values.get('revision_count', 0)})")
 
     state = g.get_state(cfg)
-    assert not state.next, (
-        f"FAIL Path3: expected END after 3 revisions, got state.next={state.next}"
-    )
     count = state.values.get("revision_count", 0)
     assert count == 3, f"FAIL Path3: revision_count should be 3, got {count}"
-    assert state.values.get("final_report"), (
-        "FAIL Path3: final_report must be non-empty after force-exit"
-    )
-    print(f"  SC-4 OK: force-exited to save at revision_count={count}, no 4th interrupt")
-    print("PASS: Path 3 (force-exit after 3 revisions)")
+    assert state.values.get("polished", "").startswith("revision 3")
+    assert not state.values.get("final_report"), "must not save before approval"
+
+    result = g.invoke(Command(resume={"decision": "approve", "feedback": ""}), cfg)
+    assert not g.get_state(cfg).next
+    assert result.get("final_report", "").startswith("revision 3")
+    print(f"  SC-4 OK: applied all revisions and saved after approval (count={count})")
+    print("PASS: Path 3 (three revisions then approve)")
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +217,7 @@ if __name__ == "__main__":
     for name, fn in [
         ("Path 1 — approve directly", test_path1_approve),
         ("Path 2 — revise once then approve", test_path2_revise_then_approve),
-        ("Path 3 — force-exit after 3 revisions", test_path3_force_exit),
+        ("Path 3 — three revisions then approve", test_path3_three_revisions_then_approve),
     ]:
         print(f"\n--- {name} ---")
         try:

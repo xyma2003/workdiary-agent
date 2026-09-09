@@ -10,6 +10,7 @@ IMPORTANT: history.db (this node) and graph_state.db (LangGraph SqliteSaver)
 are SEPARATE files. This node NEVER touches graph_state.db.
 """
 import datetime
+import uuid
 from ..state import AgentState
 from ..storage import save_report, save_markdown
 
@@ -24,20 +25,26 @@ def save_node(state: AgentState) -> dict:
         return {}
 
     # Prefer user-edited text over AI-generated polished version
-    polished = state.get("edited_text") or state.get("polished", "") or ""
-    today = datetime.date.today().isoformat()
+    edited_text = state.get("edited_text")
+    polished = edited_text if edited_text is not None else (state.get("polished", "") or "")
+    report_date = state.get("date") or datetime.date.today().isoformat()
+    report_id = state.get("report_id") or uuid.uuid4().hex
 
-    # D-04: write to history.db (never graph_state.db)
-    # Inject today's date so save_report persists the correct date rather than
-    # re-computing it (lets tests inject specific dates via state too).
-    save_report({**state, "date": today, "polished": polished})
-
-    # D-05, D-06: write exports/daily_report_{YYYY-MM-DD}.md
-    export_path = save_markdown(polished, today)
+    # Use report_id in both destinations. SQLite's unique index makes a retry
+    # idempotent, while the unique filename prevents same-day reports colliding.
+    export_path = save_markdown(polished, report_date, report_id)
+    save_report({
+        **state,
+        "report_id": report_id,
+        "date": report_date,
+        "polished": polished,
+        "export_path": export_path,
+    })
 
     # D-07: export_path available to Phase 6 Streamlit UI
     return {
         "final_report": polished,
         "export_path": export_path,
+        "report_id": report_id,
         "_saved": True,
     }

@@ -6,15 +6,17 @@ Plan 06-02: Full generation flow — graph invoke with st.status node labels, in
             HITL review UI with editable text_area, accept/revise/export buttons.
 Subsequent plans (06-03) extend this file with history page logic.
 """
+import os
 import uuid
 from datetime import date
 import streamlit as st
 from dotenv import load_dotenv
 from langgraph.types import Command
 from workdiary_agent.graph import build_graph
+from workdiary_agent.graph_constants import MAX_REVISIONS
 from workdiary_agent.storage.sqlite import get_all_reports
 
-load_dotenv(override=True)  # load .env, overriding stale shell vars (e.g. a different OPENAI_API_KEY)
+load_dotenv(override=False)  # deployment/shell configuration takes precedence over local .env
 
 
 # ---------------------------------------------------------------------------
@@ -25,6 +27,39 @@ load_dotenv(override=True)  # load .env, overriding stale shell vars (e.g. a dif
 def get_graph():
     """Cache the compiled graph across reruns — prevents thread_id regeneration (SC-5)."""
     return build_graph(use_sqlite=True)
+
+
+NODE_LABELS = {
+    "extract": "已提取工作信息",
+    "enrich": "已读取可信上下文",
+    "route_template": "已选择日报模板",
+    "draft": "已生成初稿",
+    "polish": "已完成表达优化",
+    "review": "等待人工审阅",
+    "save": "已保存日报",
+}
+
+
+def _stream_graph(graph_input, config, status_ui=None):
+    """Run/resume the graph and report node progress when updates arrive."""
+    interrupt_payload = {}
+    graph = get_graph()
+    for update in graph.stream(graph_input, config, stream_mode="updates"):
+        if not isinstance(update, dict):
+            continue
+        interrupts = update.get("__interrupt__") or []
+        if interrupts:
+            value = getattr(interrupts[0], "value", None)
+            if isinstance(value, dict):
+                interrupt_payload = value
+        if status_ui is not None:
+            for node_name in update:
+                label = NODE_LABELS.get(node_name)
+                if label:
+                    status_ui.write(label)
+
+    graph_state = graph.get_state(config)
+    return dict(graph_state.values), interrupt_payload, "review" in (graph_state.next or [])
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +83,18 @@ def _render_generate_page():
             placeholder="/path/to/your/repo",
             key="repo_path_field",
         )
+        with st.expander("Git 提交归属设置"):
+            git_author = st.text_input(
+                "Git 作者或邮箱（推荐）",
+                placeholder="name@example.com；留空时读取仓库 git user.email",
+                key="git_author_field",
+            )
+            timezone = st.text_input(
+                "工作日时区",
+                value=os.environ.get("WORKDIARY_TIMEZONE", ""),
+                placeholder="例如 Asia/Shanghai；留空使用系统时区",
+                key="timezone_field",
+            )
         data_input = st.text_area(
             "数据/指标（可选粘贴）",
             placeholder="DAU: 12000, 转化率: 3.2%, ...",
@@ -63,7 +110,10 @@ def _render_generate_page():
         # Store inputs for use by generation logic (Plan 06-02 will invoke graph here)
         st.session_state._pending_raw_input = raw_input.strip()
         st.session_state._pending_repo_path = repo_path.strip() or None
+        st.session_state._pending_git_author = git_author.strip() or None
+        st.session_state._pending_timezone = timezone.strip() or None
         st.session_state._pending_data_input = data_input.strip() or None
+        st.session_state._pending_report_id = uuid.uuid4().hex
         st.session_state.app_state = "generating"
         st.rerun()
 
@@ -95,35 +145,29 @@ def _render_status_and_review():
 
 def _run_generation():
     """Invokes the graph and shows st.status node progress labels (D-11, D-12, D-13)."""
-    # Node label mapping per D-12
-    NODE_LABELS = {
-        "extract":        "正在提取信息...",
-        "enrich":         "正在丰富上下文...",
-        "route_template": "正在判断日报类型...",
-        "draft":          "正在生成初稿...",
-        "polish":         "正在润色...",
-        "review":         "等待审阅...",
-    }
-
     config = {"configurable": {"thread_id": st.session_state.thread_id}}
     raw_input  = st.session_state._pending_raw_input
     repo_path  = st.session_state._pending_repo_path
+    git_author = st.session_state._pending_git_author
+    timezone = st.session_state._pending_timezone
     data_input = st.session_state._pending_data_input
+    report_id = st.session_state._pending_report_id
 
     with st.status("正在生成日报...", expanded=True) as status_ui:
-        # Write sequential node labels — st.status keeps them visible.
-        # Labels appear before the blocking invoke() call so the user sees progress context.
-        for label in NODE_LABELS.values():
-            st.write(label)
-
         try:
-            result = get_graph().invoke(
+            result, interrupt_payload, is_reviewing = _stream_graph(
                 {
                     "raw_input": raw_input,
                     "repo_path": repo_path,
+                    "git_author": git_author,
+                    "timezone": timezone,
                     "data_input": data_input,
+                    "report_id": report_id,
+                    "feedback_history": [],
+                    "revision_count": 0,
                 },
                 config,
+                status_ui,
             )
         except Exception as e:
             import logging
@@ -133,20 +177,18 @@ def _run_generation():
             st.error("生成日报时出现错误，请稍后重试。如问题持续请检查 API 配置。")
             return
 
-        # Check interrupt: graph paused at review node
-        graph_state = get_graph().get_state(config)
-        if "review" in (graph_state.next or []):
-            # Extract polished content from interrupt payload
-            interrupt_payload = {}
-            if "__interrupt__" in result and result["__interrupt__"]:
-                interrupt_payload = result["__interrupt__"][0].value
-
+        if is_reviewing:
             polished = interrupt_payload.get("polished") or result.get("polished", "")
             template_type = result.get("template_type", "混合型")
+            revision_count = interrupt_payload.get(
+                "revision_count", result.get("revision_count", 0)
+            )
 
             st.session_state.result = {
                 "polished": polished,
                 "template_type": template_type,
+                "revision_count": revision_count,
+                "report_id": result.get("report_id", report_id),
                 "interrupt_payload": interrupt_payload,
             }
             st.session_state.app_state = "reviewing"
@@ -165,16 +207,18 @@ def _render_review_ui():
     result = st.session_state.result or {}
     polished = result.get("polished", "")
     template_type = result.get("template_type", "未知模板")
+    revision_count = result.get("revision_count", 0)
 
     # D-13 equivalent: show selected template (TMPL-02 visibility)
     st.caption(f"已选用 {template_type} 模板")
 
     # D-14: editable text_area pre-filled with polished content (HITL-02 inline editing)
+    edit_key = f"edit_area_{st.session_state.thread_id}_{revision_count}"
     edited_text = st.text_area(
         "日报内容（可直接编辑）",
         value=polished,
         height=300,
-        key="edit_area",   # key ensures st.session_state["edit_area"] holds current value
+        key=edit_key,
     )
 
     # Three-button row (D-15)
@@ -186,7 +230,10 @@ def _render_review_ui():
     with col1:
         if st.button("✓ 接受", type="primary", use_container_width=True, key="accept_btn"):
             # D-18: read current value from session_state (includes user's inline edits)
-            current_text = st.session_state.get("edit_area", polished)
+            current_text = st.session_state.get(edit_key, polished)
+            if not current_text.strip():
+                st.warning("日报内容不能为空")
+                return
             try:
                 r = get_graph().invoke(
                     Command(resume={
@@ -208,8 +255,16 @@ def _render_review_ui():
 
     # D-15 + D-17: Revise button — shows feedback input, then resumes with revise decision
     with col2:
-        if st.button("↻ 重新生成", use_container_width=True, key="revise_btn"):
+        if st.button(
+            "↻ 重新生成",
+            use_container_width=True,
+            key="revise_btn",
+            disabled=revision_count >= MAX_REVISIONS,
+        ):
             st.session_state._show_feedback = True
+
+    if revision_count >= MAX_REVISIONS:
+        st.info("已达到修改上限，请直接编辑后接受；系统不会自动保存未经确认的版本。")
 
     if st.session_state.get("_show_feedback"):
         feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")
@@ -218,27 +273,33 @@ def _render_review_ui():
                 st.warning("请填写修改意见")
             else:
                 try:
-                    result2 = get_graph().invoke(
-                        Command(resume={"decision": "revise", "feedback": feedback.strip()}),
+                    current_text = st.session_state.get(edit_key, polished)
+                    if not current_text.strip():
+                        st.warning("日报内容不能为空")
+                        return
+                    result2, interrupt_payload, is_reviewing = _stream_graph(
+                        Command(resume={
+                            "decision": "revise",
+                            "feedback": feedback.strip(),
+                            "edited_text": current_text,
+                        }),
                         config,
                     )
-                    # After revise, graph pauses at review again — update result
-                    graph_state = get_graph().get_state(config)
-                    if "review" in (graph_state.next or []):
-                        interrupt_payload = {}
-                        if "__interrupt__" in result2 and result2["__interrupt__"]:
-                            interrupt_payload = result2["__interrupt__"][0].value
+                    if is_reviewing:
                         new_polished = interrupt_payload.get("polished") or result2.get("polished", polished)
                         new_template = result2.get("template_type", template_type)
                         st.session_state.result = {
                             "polished": new_polished,
                             "template_type": new_template,
+                            "revision_count": interrupt_payload.get(
+                                "revision_count", result2.get("revision_count", revision_count + 1)
+                            ),
+                            "report_id": result2.get("report_id", result.get("report_id")),
                             "interrupt_payload": interrupt_payload,
                         }
                         st.session_state._show_feedback = False
                         st.session_state.app_state = "reviewing"
                     else:
-                        # Force-exit after 3 revisions — graph reached save
                         st.session_state.result = dict(result2)
                         st.session_state.app_state = "done"
                     st.rerun()
@@ -249,11 +310,12 @@ def _render_review_ui():
 
     # D-15 + D-19: Export download button — passes polished text directly (no file read, no reload)
     with col3:
-        export_text = st.session_state.get("edit_area", polished) or polished
+        export_text = st.session_state.get(edit_key, polished) or polished
+        export_id = (result.get("report_id") or st.session_state.thread_id)[:8]
         st.download_button(
             label="⬇ 导出",
             data=export_text,
-            file_name=f"daily_report_{date.today()}.md",
+            file_name=f"daily_report_{date.today()}_{export_id}.md",
             mime="text/markdown",
             use_container_width=True,
             key="export_btn",
@@ -296,7 +358,10 @@ def _render_history_page():
             st.download_button(
                 label="⬇ 导出此记录",
                 data=r.get("polished", ""),
-                file_name=f"daily_report_{r['date']}.md",
+                file_name=(
+                    f"daily_report_{r['date']}_"
+                    f"{(r.get('report_id') or str(r['id']))[:8]}.md"
+                ),
                 mime="text/markdown",
                 key=f"hist_export_{r['id']}",
             )

@@ -2,11 +2,12 @@
 """
 Standalone smoke test for Phase 1 Graph Skeleton.
 Verifies all 4 ROADMAP success criteria without pytest.
-Run: conda run -n llm-data-pipeline python scripts/test_skeleton.py
+Run: python scripts/test_skeleton.py
 """
 import sys
 import os
 import typing
+from unittest.mock import MagicMock, patch
 
 # Ensure project root is on sys.path regardless of cwd when script is invoked
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,19 +42,34 @@ def test_all_nodes_present():
 
 def test_conditional_edge_logic():
     from workdiary_agent.graph import route_after_revise
-    assert route_after_revise({"revision_count": 0}) == "review"
-    assert route_after_revise({"revision_count": 2}) == "review"
-    assert route_after_revise({"revision_count": 3}) == "save"
-    assert route_after_revise({"revision_count": 4}) == "save"
-    assert route_after_revise({}) == "review"
+    assert route_after_revise({"revision_count": 0}) == "polish"
+    assert route_after_revise({"revision_count": 2}) == "polish"
+    assert route_after_revise({"revision_count": 3}) == "polish"
+    assert route_after_revise({"revision_count": 4}) == "polish"
+    assert route_after_revise({}) == "polish"
     print("PASS: conditional edge logic correct")
 
 
 def test_invoke_no_error():
     from workdiary_agent.graph import build_graph
+    from workdiary_agent.state import StructuredInfo
+
+    mock_llm = MagicMock()
+    mock_response = MagicMock(content="【已选用技术型模板】\n完成测试")
+    mock_llm.invoke.return_value = mock_response
+    mock_structured = MagicMock()
+    mock_structured.invoke.return_value = StructuredInfo(
+        tasks=["测试"], outputs=["结果"], blockers=[], progress="完成"
+    )
+    mock_llm.with_structured_output.return_value = mock_structured
+
     graph = build_graph()
     config = {"configurable": {"thread_id": "test-1"}}
-    result = graph.invoke({"raw_input": "test"}, config)
+    with patch("workdiary_agent.nodes.extract.make_llm", return_value=mock_llm), \
+         patch("workdiary_agent.nodes.draft.make_llm", return_value=mock_llm), \
+         patch("workdiary_agent.nodes.polish.make_llm", return_value=mock_llm), \
+         patch("workdiary_agent.nodes.route_template.TemplateRouterAgent.classify", return_value="技术型"):
+        result = graph.invoke({"raw_input": "test"}, config)
     assert isinstance(result, dict), f"Expected dict, got {type(result)}"
     print("PASS: invoke returns dict")
 

@@ -5,11 +5,8 @@ StateGraph assembly for WorkDiary Agent.
 This module owns the graph topology: add_node, add_edge, add_conditional_edges, compile.
 Node implementations live in workdiary_agent/nodes/. State schema lives in workdiary_agent/state.py.
 
-Phase evolution:
-- Phase 1 (now): All nodes are stubs. review→revise is a direct edge. No interrupt.
-- Phase 4: review node body gains interrupt(). This file's compile() call gains no new args
-  (interrupt() inside a node does not require compile-time interrupt_before).
-- Phase 4 also: InMemorySaver → SqliteSaver swap at the compile() call only.
+The graph uses an in-node ``interrupt()`` for review. Tests use an in-memory
+checkpointer; the Streamlit app uses a persistent SQLite checkpointer.
 """
 from __future__ import annotations
 
@@ -20,6 +17,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from .graph_constants import MAX_REVISIONS
 from .state import AgentState
 from .nodes import (
     extract_node,
@@ -37,26 +35,29 @@ from .nodes import (
 # Conditional edge routing functions
 # ---------------------------------------------------------------------------
 
-def route_after_review(state: AgentState) -> Literal["save", "revise"]:
+def route_after_review(state: AgentState) -> Literal["save", "revise", "review"]:
     """Routes from review node based on human_decision written by review_node.
 
-    Returns 'save' if decision is 'approve' (or missing), 'revise' otherwise.
-    D-05: approve → save, revise → revise_node.
+    Invalid/missing decisions never save implicitly. Once the revision limit is
+    reached, another revise request returns to review so explicit approval is
+    still required.
     """
-    decision = state.get("human_decision", "approve")
-    return "save" if decision == "approve" else "revise"
+    decision = state.get("human_decision")
+    if decision == "approve":
+        return "save"
+    if decision == "revise" and state.get("revision_count", 0) < MAX_REVISIONS:
+        return "revise"
+    return "review"
 
 
-def route_after_revise(state: AgentState) -> Literal["polish", "save"]:
-    """Routes to 'polish' for another revision pass, or 'save' when limit reached.
+def route_after_revise(state: AgentState) -> Literal["polish"]:
+    """Always apply an accepted revision before returning to human review.
 
-    UPDATED for Phase 4 (D-06+D-07): returns 'polish'|'save' (was 'review'|'save').
-    Guard LOGIC unchanged: count >= 3 → save. Destination renamed because the
-    revise→polish→review loop replaces the old revise→review loop.
-    Uses state.get() — NOT state[] — because AgentState total=False.
+    The limit is enforced before entering ``revise`` by ``route_after_review``.
+    This avoids the previous bug where the third feedback was skipped and the
+    previous draft was saved without explicit approval.
     """
-    count = state.get("revision_count", 0)
-    return "save" if count >= 3 else "polish"
+    return "polish"
 
 
 # ---------------------------------------------------------------------------
@@ -104,15 +105,15 @@ def build_graph(use_sqlite: bool = False):
     builder.add_conditional_edges(
         "review",
         route_after_review,
-        {"save": "save", "revise": "revise"},
+        {"save": "save", "revise": "revise", "review": "review"},
     )
 
-    # D-06+D-07: single conditional edge — no separate add_edge("revise","polish") needed.
-    # The guard logic (count>=3→save) is unchanged; destination "review" renamed to "polish".
+    # Every accepted revision is applied. The limit is checked before this node,
+    # and the revised result always returns to review for explicit approval.
     builder.add_conditional_edges(
         "revise",
         route_after_revise,
-        {"polish": "polish", "save": "save"},
+        {"polish": "polish"},
     )
 
     builder.add_edge("save", END)
