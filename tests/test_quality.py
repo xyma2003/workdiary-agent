@@ -25,12 +25,36 @@ def test_quality_flags_numbers_absent_from_all_sources():
 def test_quality_accepts_numbers_present_in_metrics():
     result = analyze_report_quality({
         "raw_input": "完成性能优化",
+        "data_input": "响应时间从 200ms 降至 45ms",
         "data_summary": "响应时间从 200ms 降至 45ms",
         "polished": "完成性能优化，响应时间从 200ms 降至 45ms。",
     })
 
     assert result["unverified_numbers"] == []
     assert result["warnings"] == []
+
+
+def test_quality_does_not_trust_hallucinated_metric_summary():
+    result = analyze_report_quality({
+        "raw_input": "完成性能优化",
+        "data_input": "响应时间降至 45ms",
+        "data_summary": "响应时间从 200ms 降至 45ms",
+        "polished": "响应时间从 200ms 降至 45ms。",
+    })
+
+    assert result["unverified_summary_numbers"] == ["200"]
+    assert result["unverified_numbers"] == ["200"]
+
+
+def test_quality_detects_unredacted_secret_in_final_report():
+    result = analyze_report_quality({
+        "raw_input": "检查部署配置",
+        "polished": "检查密钥 sk-abcdefghijklmnopqrstuvwxyz",
+    })
+
+    assert result["contains_potential_secret"] is True
+    assert result["contains_secret_marker"] is False
+    assert any("凭证" in warning for warning in result["warnings"])
 
 
 def test_quality_requests_missing_metric_disclosure():

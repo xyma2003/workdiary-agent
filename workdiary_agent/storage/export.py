@@ -46,10 +46,15 @@ def save_markdown(polished: str, date: str, report_id: str | None = None) -> str
     except ValueError:
         filepath = export_path_for_report(date, uuid.uuid4().hex)
     content = f"# 日报 {date}\n\n{polished}\n"
-    temp_path = f"{filepath}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    os.replace(temp_path, filepath)
+    temp_path = f"{filepath}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(temp_path, filepath)
+    finally:
+        # A failed write/replace must not leave stale temp files behind.
+        if os.path.isfile(temp_path):
+            os.remove(temp_path)
     return filepath
 
 

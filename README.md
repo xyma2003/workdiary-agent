@@ -130,10 +130,10 @@ Open **http://localhost:8501** in your browser.
 ## Usage
 
 1. Enter a rough description of your day (口语化输入, any style) and optionally choose a template instead of automatic routing
-2. Optionally paste a git repo path and author/email to pull in only your commits from the configured work-day timezone
+2. Optionally paste a git repo path and author/email to pull in only your exact-identity commits from the report date in the configured timezone
 3. Optionally paste raw data/metrics for the agent to extract and include
 4. Click **生成日报** — the agent runs through all nodes and pauses for your review
-5. Read the draft and its deterministic fact warnings, edit inline if needed, then **接受** or **修改**（up to 3 applied revision rounds; final save always requires approval）
+5. Read the draft and its deterministic fact warnings, edit inline if needed, then **接受** or **修改**（number warnings require acknowledgement; potential credentials must be removed; final save always requires approval）
 6. The final report is saved to history and exported as a markdown file in `exports/`
 7. Past reports appear in the **历史记录** sidebar tab, with content search, template/date filters, and pagination
 8. If generation is interrupted or the browser closes during review, reopen it from **恢复未完成日报**
@@ -188,8 +188,9 @@ exports/ + history.db
 | Two SQLite files | `graph_state.db` is owned exclusively by LangGraph's SqliteSaver; mixing app data into it breaks serialisation |
 | Revision limit (3×) | Applies all three revisions, then disables further model revisions while preserving manual edit and explicit approval |
 | Checkpoint recovery | Incomplete graph threads are discovered directly from the LangGraph checkpointer; retry and review use the same persisted state |
+| Checkpoint lifecycle | Completed UI runs remove their graph checkpoints after the approved report is persisted; unfinished runs remain recoverable |
 | Stable data directory | `WORKDIARY_DATA_DIR` can place both databases and exports on a durable volume independent of the launch directory |
-| Pre-save fact warnings | Deterministic checks flag numbers absent from source material and missing metric disclosure without adding another model call |
+| Pre-save fact warnings | Checks compare the report and model-derived metric summary against original input/Git/data, require acknowledgement, and block likely credentials |
 
 ---
 

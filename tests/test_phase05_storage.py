@@ -9,6 +9,8 @@ Tests cover:
 import pytest
 import workdiary_agent.storage.sqlite as sqlite_mod
 import workdiary_agent.storage.export as export_mod
+from workdiary_agent.nodes.save import save_node
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +296,55 @@ def test_delete_markdown_removes_only_matching_export(tmp_path, monkeypatch):
     assert not os.path.exists(target)
     assert os.path.exists(retained)
     assert export_mod.delete_markdown("2026-04-25", "missing-id") is False
+
+
+def test_save_node_removes_new_export_when_database_write_fails():
+    with patch("workdiary_agent.nodes.save.get_report", return_value=None), \
+         patch("workdiary_agent.nodes.save.save_markdown", return_value="/tmp/report.md"), \
+         patch("workdiary_agent.nodes.save.save_report", side_effect=RuntimeError("db failed")), \
+         patch("workdiary_agent.nodes.save.delete_markdown") as delete_export:
+        with pytest.raises(RuntimeError, match="db failed"):
+            save_node({
+                "report_id": "report-id",
+                "date": "2026-04-25",
+                "polished": "report",
+            })
+
+    delete_export.assert_called_once_with("2026-04-25", "report-id")
+
+
+def test_failed_atomic_replace_removes_temp_file(tmp_path, monkeypatch):
+    exports_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
+
+    with patch("workdiary_agent.storage.export.os.replace", side_effect=OSError("disk")):
+        with pytest.raises(OSError, match="disk"):
+            export_mod.save_markdown("report", "2026-04-25", "report-id")
+
+    assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_save_node_is_idempotent_across_graph_retry(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "history.db")
+    exports_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
+    state = {
+        "report_id": "stable-report-id",
+        "date": "2026-04-25",
+        "template_type": "技术型",
+        "raw_input": "完成缓存修复",
+        "polished": "完成缓存修复。",
+    }
+
+    first_update = save_node(state)
+    second_update = save_node({**state, **first_update})
+
+    assert second_update == {}
+    assert len(sqlite_mod.get_all_reports()) == 1
+    assert export_mod.export_path_for_report(
+        "2026-04-25", "stable-report-id"
+    ) == first_update["export_path"]
 
 
 # ---------------------------------------------------------------------------

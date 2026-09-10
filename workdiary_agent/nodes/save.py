@@ -9,9 +9,10 @@ D-07: sets export_path in returned state dict for Phase 6 UI
 IMPORTANT: history.db (this node) and graph_state.db (LangGraph SqliteSaver)
 are SEPARATE files. This node NEVER touches graph_state.db.
 """
+import logging
 import uuid
 from ..state import AgentState
-from ..storage import save_report, save_markdown
+from ..storage import delete_markdown, get_report, save_report, save_markdown
 from ..time_utils import work_date
 
 
@@ -32,14 +33,25 @@ def save_node(state: AgentState) -> dict:
 
     # Use report_id in both destinations. SQLite's unique index makes a retry
     # idempotent, while the unique filename prevents same-day reports colliding.
+    already_persisted = get_report(report_id) is not None
     export_path = save_markdown(polished, report_date, report_id)
-    save_report({
-        **state,
-        "report_id": report_id,
-        "date": report_date,
-        "polished": polished,
-        "export_path": export_path,
-    })
+    try:
+        save_report({
+            **state,
+            "report_id": report_id,
+            "date": report_date,
+            "polished": polished,
+            "export_path": export_path,
+        })
+    except Exception:
+        # Compensate a DB failure for a brand-new report. Existing idempotent
+        # retries keep their export because it may belong to a valid DB row.
+        if not already_persisted:
+            try:
+                delete_markdown(report_date, report_id)
+            except OSError:
+                logging.exception("Failed to roll back report export")
+        raise
 
     # D-07: export_path available to Phase 6 Streamlit UI
     return {

@@ -1,8 +1,9 @@
 """Regression tests for Git and metric enrichment."""
+import git
 import pytest
 from unittest.mock import patch, MagicMock
 from workdiary_agent.state import AgentState, StructuredInfo
-from workdiary_agent.nodes.enrich import enrich_node
+from workdiary_agent.nodes.enrich import _read_git_log, enrich_node
 from workdiary_agent.nodes.draft import draft_node
 
 
@@ -10,10 +11,18 @@ from workdiary_agent.nodes.draft import draft_node
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_mock_commit(hexsha: str, message: str) -> MagicMock:
+def _make_mock_commit(
+    hexsha: str,
+    message: str,
+    *,
+    author_name: str = "Me",
+    author_email: str = "me@example.com",
+) -> MagicMock:
     c = MagicMock()
     c.hexsha = hexsha
     c.message = message
+    c.author.name = author_name
+    c.author.email = author_email
     return c
 
 
@@ -36,6 +45,7 @@ def test_enrich_valid_repo_produces_git_log():
             "repo_path": "/fake/repo",
             "git_author": "me@example.com",
             "timezone": "Asia/Shanghai",
+            "date": "2026-01-02",
         }
         result = enrich_node(state)
 
@@ -46,9 +56,70 @@ def test_enrich_valid_repo_produces_git_log():
     assert "feat: add login module" in git_log, f"git_log must contain commit message, got: {git_log}"
     assert "def5678" in git_log, f"git_log must contain second commit hash, got: {git_log}"
     kwargs = mock_repo.iter_commits.call_args.kwargs
-    assert kwargs["author"] == "me@example.com"
+    assert kwargs["author"] == r"me@example\.com"
+    assert kwargs["since"].startswith("2026-01-02T00:00:00")
     assert "+08:00" in kwargs["since"]
-    assert kwargs["max_count"] == 100
+    assert kwargs["max_count"] == 500
+
+
+def test_enrich_requires_exact_author_identity():
+    fake_commits = [
+        _make_mock_commit(
+            "bad1234567890",
+            "feat: teammate work",
+            author_email="other-me@example.com",
+        ),
+        _make_mock_commit("good123456789", "fix: my work"),
+    ]
+    mock_repo = MagicMock()
+    mock_repo.iter_commits.return_value = fake_commits
+
+    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+         patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
+        result = enrich_node({
+            "repo_path": "/fake/repo",
+            "git_author": "me@example.com",
+            "date": "2026-01-02",
+        })
+
+    assert "good123" in result["git_log"]
+    assert "bad1234" not in result["git_log"]
+
+
+def test_real_git_log_uses_report_date_and_exact_author(tmp_path):
+    repo = git.Repo.init(tmp_path)
+    work_file = tmp_path / "work.txt"
+    mine = git.Actor("Me", "me@example.com")
+    similar = git.Actor("Other", "other-me@example.com")
+
+    work_file.write_text("other", encoding="utf-8")
+    repo.index.add([str(work_file)])
+    repo.index.commit(
+        "feat: teammate work",
+        author=similar,
+        committer=similar,
+        author_date="2026-01-02T09:00:00 +0800",
+        commit_date="2026-01-02T09:00:00 +0800",
+    )
+    work_file.write_text("mine", encoding="utf-8")
+    repo.index.add([str(work_file)])
+    repo.index.commit(
+        "fix: my work",
+        author=mine,
+        committer=mine,
+        author_date="2026-01-02T10:00:00 +0800",
+        commit_date="2026-01-02T10:00:00 +0800",
+    )
+
+    result = _read_git_log(
+        str(tmp_path),
+        git_author="me@example.com",
+        timezone_name="Asia/Shanghai",
+        report_date="2026-01-02",
+    )
+
+    assert "fix: my work" in result
+    assert "feat: teammate work" not in result
 
 
 def test_enrich_without_author_skips_shared_repo_commits():

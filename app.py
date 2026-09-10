@@ -1,4 +1,5 @@
 """Streamlit UI for generation, checkpoint recovery, review, and history."""
+import hashlib
 import os
 import uuid
 import streamlit as st
@@ -78,6 +79,15 @@ def _activate_checkpoint(thread_id: str) -> None:
         st.session_state.app_state = "generating"
         st.session_state._resume_existing = True
     st.rerun()
+
+
+def _forget_completed_checkpoint(thread_id: str) -> None:
+    """Keep graph_state.db bounded after history persistence succeeds."""
+    try:
+        get_graph().checkpointer.delete_thread(thread_id)
+    except Exception:
+        import logging
+        logging.exception("Failed to prune completed checkpoint thread")
 
 
 def _render_recoverable_runs() -> None:
@@ -278,6 +288,7 @@ def _run_generation():
             st.session_state.result = result
             st.session_state._resume_existing = False
             st.session_state.app_state = "done"
+            _forget_completed_checkpoint(st.session_state.thread_id)
             status_ui.update(label="生成完成", state="complete", expanded=False)
             st.rerun()
 
@@ -336,6 +347,28 @@ def _render_review_ui():
         key=edit_key,
     )
 
+    quality = analyze_report_quality({**result, "edited_text": edited_text})
+    quality_acknowledged = True
+    contains_secret = (
+        quality["contains_secret_marker"]
+        or quality["contains_potential_secret"]
+    )
+    if quality["warnings"]:
+        with st.expander("保存前事实检查", expanded=True):
+            for warning in quality["warnings"]:
+                st.warning(warning)
+        if contains_secret:
+            st.error("检测到潜在凭证或脱敏标记，请移除后再保存。")
+            quality_acknowledged = False
+        else:
+            warning_fingerprint = hashlib.sha256(
+                edited_text.encode("utf-8")
+            ).hexdigest()[:12]
+            quality_acknowledged = st.checkbox(
+                "我已根据原始材料核对以上提示",
+                key=f"quality_ack_{edit_key}_{warning_fingerprint}",
+            )
+
     # Three-button row (D-15)
     col1, col2, col3 = st.columns(3)
 
@@ -343,7 +376,13 @@ def _render_review_ui():
 
     # D-15 + D-16 + D-18: Accept button — passes edited text back to graph so save_node persists it
     with col1:
-        if st.button("✓ 接受", type="primary", use_container_width=True, key="accept_btn"):
+        if st.button(
+            "✓ 接受",
+            type="primary",
+            use_container_width=True,
+            key="accept_btn",
+            disabled=not quality_acknowledged,
+        ):
             # D-18: read current value from session_state (includes user's inline edits)
             current_text = st.session_state.get(edit_key, polished)
             if not current_text.strip():
@@ -362,6 +401,7 @@ def _render_review_ui():
                 st.session_state.result = dict(r)
                 st.session_state.result["polished"] = current_text
                 st.session_state.app_state = "done"
+                _forget_completed_checkpoint(st.session_state.thread_id)
                 st.rerun()
             except Exception:
                 import logging
@@ -391,12 +431,6 @@ def _render_review_ui():
             if result.get("data_summary"):
                 st.markdown("**数据指标**")
                 st.text(result["data_summary"])
-
-    quality = analyze_report_quality({**result, "edited_text": edited_text})
-    if quality["warnings"]:
-        with st.expander("保存前事实检查", expanded=True):
-            for warning in quality["warnings"]:
-                st.warning(warning)
 
     if st.session_state.get("_show_feedback"):
         feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")

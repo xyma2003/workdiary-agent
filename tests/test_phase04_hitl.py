@@ -6,6 +6,15 @@ from workdiary_agent.graph import build_graph, route_after_revise, route_after_r
 from workdiary_agent.nodes.polish import polish_node
 from workdiary_agent.recovery import list_recoverable_runs
 from workdiary_agent.state import StructuredInfo
+import workdiary_agent.storage.export as export_mod
+import workdiary_agent.storage.sqlite as sqlite_mod
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persistent_outputs(tmp_path, monkeypatch):
+    """Graph tests must never write into the application's real data files."""
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", str(tmp_path / "history.db"))
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", str(tmp_path / "exports"))
 
 
 # ---------------------------------------------------------------------------

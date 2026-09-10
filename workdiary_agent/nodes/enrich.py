@@ -10,8 +10,9 @@ Decision references:
 
 Node signature follows project convention: def xxx_node(state: AgentState) -> dict
 """
-from datetime import datetime, timedelta
+from datetime import date as Date, datetime, time, timedelta
 import logging
+import re
 
 import git
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -65,8 +66,9 @@ def _read_git_log(
     repo_path: str,
     git_author: str | None = None,
     timezone_name: str | None = None,
+    report_date: str | None = None,
 ) -> str | None:
-    """Read today's commits from repo_path using GitPython.
+    """Read the report day's commits from repo_path using GitPython.
 
     Returns formatted multi-line string or None on any error/empty.
     Format per commit: "{hash[:7]} {message}"
@@ -87,15 +89,38 @@ def _read_git_log(
             return None
 
         tz = resolve_timezone(timezone_name)
-        now = datetime.now(tz)
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
-        commits = list(repo.iter_commits(
+        try:
+            day = Date.fromisoformat(report_date) if report_date else datetime.now(tz).date()
+        except (TypeError, ValueError):
+            day = datetime.now(tz).date()
+        start = datetime.combine(day, time.min, tzinfo=tz)
+        end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+        # Git's --author argument is a regular expression. Escape it to narrow
+        # candidates, then verify the parsed commit identity exactly so similar
+        # names and email addresses are never attributed to the user.
+        candidates = repo.iter_commits(
             since=start.isoformat(),
             until=end.isoformat(),
-            author=author,
-            max_count=100,
-        ))
+            author=re.escape(author),
+            max_count=500,
+        )
+        requested_identity = author.casefold()
+        commits = []
+        for commit in candidates:
+            identity = getattr(commit, "author", None)
+            name = getattr(identity, "name", "")
+            email = getattr(identity, "email", "")
+            name = name.strip() if isinstance(name, str) else ""
+            email = email.strip() if isinstance(email, str) else ""
+            exact_identities = {
+                value.casefold()
+                for value in (name, email, f"{name} <{email}>")
+                if value
+            }
+            if requested_identity in exact_identities:
+                commits.append(commit)
+                if len(commits) >= 100:
+                    break
         if not commits:
             return None
         # Only include the subject line. Multi-line commit bodies are noisy and
@@ -160,6 +185,7 @@ def enrich_node(state: AgentState) -> dict:
         repo_path,
         git_author=state.get("git_author"),
         timezone_name=state.get("timezone"),
+        report_date=state.get("date"),
     )
 
     # Step 2: Data input extraction (D-05 to D-07)
