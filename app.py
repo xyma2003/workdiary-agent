@@ -9,8 +9,10 @@ load_dotenv(override=False)  # load runtime paths/config before project modules
 
 from workdiary_agent.graph import build_graph
 from workdiary_agent.graph_constants import MAX_REVISIONS
+from workdiary_agent.quality import analyze_report_quality
 from workdiary_agent.recovery import list_recoverable_runs
-from workdiary_agent.storage.sqlite import get_all_reports
+from workdiary_agent.storage.export import delete_markdown
+from workdiary_agent.storage.sqlite import count_reports, get_all_reports, get_report
 from workdiary_agent.time_utils import work_date
 from workdiary_agent.utils import LLMConfigurationError, validate_llm_configuration
 
@@ -289,6 +291,7 @@ def _render_failure_ui():
         st.session_state.app_state = "generating"
         st.rerun()
     if col_discard.button("放弃当前日报", use_container_width=True):
+        abandoned = dict(st.session_state.result or {})
         try:
             get_graph().checkpointer.delete_thread(st.session_state.thread_id)
         except Exception:
@@ -296,6 +299,16 @@ def _render_failure_ui():
             logging.exception("Failed to discard checkpoint thread")
             st.error("删除未完成任务失败，请重试。")
             return
+        # A crash between file export and the history DB write can leave an
+        # orphan. Only remove it after confirming there is no persisted row.
+        try:
+            report_id = abandoned.get("report_id")
+            report_date = abandoned.get("date")
+            if report_id and report_date and get_report(report_id) is None:
+                delete_markdown(report_date, report_id)
+        except Exception:
+            import logging
+            logging.exception("Failed to clean abandoned report export")
         st.session_state.thread_id = str(uuid.uuid4())
         st.session_state.result = None
         st.session_state._show_feedback = False
@@ -379,6 +392,12 @@ def _render_review_ui():
                 st.markdown("**数据指标**")
                 st.text(result["data_summary"])
 
+    quality = analyze_report_quality({**result, "edited_text": edited_text})
+    if quality["warnings"]:
+        with st.expander("保存前事实检查", expanded=True):
+            for warning in quality["warnings"]:
+                st.warning(warning)
+
     if st.session_state.get("_show_feedback"):
         feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")
         if st.button("确认修改", key="confirm_revise_btn"):
@@ -440,31 +459,81 @@ def _render_review_ui():
 
 
 def _render_history_page():
-    """History view: shows all past reports ordered by date DESC (D-20, D-21)."""
+    """History view with search, filters, pagination, and export."""
     st.title("历史记录")
+
+    col_query, col_template = st.columns([3, 1])
+    with col_query:
+        query = st.text_input(
+            "搜索内容",
+            placeholder="搜索原始输入或日报内容",
+            key="history_query",
+        ).strip()
+    with col_template:
+        template_choice = st.selectbox(
+            "模板类型",
+            ["全部", "技术型", "业务型", "混合型"],
+            key="history_template_filter",
+        )
+    date_range = st.date_input(
+        "日期范围",
+        value=(),
+        format="YYYY-MM-DD",
+        key="history_date_range",
+    )
+    date_from = date_to = None
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+        date_from = date_range[0].isoformat()
+        date_to = date_range[1].isoformat()
+    elif isinstance(date_range, (tuple, list)) and len(date_range) == 1:
+        st.caption("请继续选择结束日期；选定前暂不应用日期筛选。")
+
+    template_type = None if template_choice == "全部" else template_choice
+    filter_signature = (query, template_type, date_from, date_to)
+    if st.session_state.get("_history_filter_signature") != filter_signature:
+        st.session_state._history_filter_signature = filter_signature
+        st.session_state.history_page = 0
 
     col_refresh, _ = st.columns([1, 5])
     with col_refresh:
         if st.button("刷新", key="history_refresh_btn"):
             st.rerun()
 
+    page_size = 10
+    filters = {
+        "query": query or None,
+        "template_type": template_type,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
     try:
-        reports = get_all_reports()   # Returns list[dict], date DESC (D-20)
-    except Exception as e:
+        total = count_reports(**filters)
+        max_page = max((total - 1) // page_size, 0)
+        current_page = min(st.session_state.get("history_page", 0), max_page)
+        st.session_state.history_page = current_page
+        reports = get_all_reports(
+            **filters,
+            limit=page_size,
+            offset=current_page * page_size,
+        )
+    except Exception:
         import logging
         logging.exception("Failed to load history")
         st.error("无法加载历史记录，请刷新重试。")
         return
 
     if not reports:
-        st.info("暂无历史记录。生成并接受一篇日报后，记录将出现在这里。")
+        if any(filters.values()):
+            st.info("没有符合当前筛选条件的记录。")
+        else:
+            st.info("暂无历史记录。生成并接受一篇日报后，记录将出现在这里。")
         return
 
-    st.markdown(f"共 **{len(reports)}** 条记录")
+    st.markdown(f"共 **{total}** 条记录")
 
     for r in reports:
         # D-21: st.expander labeled with date and template_type
-        label = f"{r['date']} — {r.get('template_type', '未知模板')}"
+        label = f"{r['date']} — {r.get('template_type') or '未知模板'}"
         with st.expander(label, expanded=False):
             st.caption(f"创建时间: {r.get('created_at', '')}")
             st.markdown("**原始输入:**")
@@ -482,6 +551,29 @@ def _render_history_page():
                 mime="text/markdown",
                 key=f"hist_export_{r['id']}",
             )
+
+    if total > page_size:
+        previous, page_label, following = st.columns([1, 2, 1])
+        if previous.button(
+            "上一页",
+            disabled=current_page == 0,
+            key="history_previous_page",
+            use_container_width=True,
+        ):
+            st.session_state.history_page = current_page - 1
+            st.rerun()
+        page_label.markdown(
+            f"<p style='text-align:center'>第 {current_page + 1} / {max_page + 1} 页</p>",
+            unsafe_allow_html=True,
+        )
+        if following.button(
+            "下一页",
+            disabled=current_page >= max_page,
+            key="history_next_page",
+            use_container_width=True,
+        ):
+            st.session_state.history_page = current_page + 1
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +597,8 @@ if "_show_feedback" not in st.session_state:
     st.session_state._show_feedback = False
 if "_resume_existing" not in st.session_state:
     st.session_state._resume_existing = False
+if "history_page" not in st.session_state:
+    st.session_state.history_page = 0
 
 # ---------------------------------------------------------------------------
 # Sidebar navigation (D-01, D-02)

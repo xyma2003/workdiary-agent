@@ -46,6 +46,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_report_id "
         "ON reports(report_id)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reports_template_date "
+        "ON reports(template_type, date DESC)"
+    )
 
 
 @contextmanager
@@ -99,16 +106,102 @@ def save_report(state: Any) -> str:
     return report_id
 
 
-def get_all_reports() -> list[dict]:
-    """Return all reports ordered by date DESC (most recent first).
+def _report_filter_sql(
+    *,
+    query: str | None = None,
+    template_type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[str, list[Any]]:
+    """Build a parameterized WHERE clause shared by list and count queries."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if query and query.strip():
+        pattern = f"%{query.strip()}%"
+        clauses.append("(raw_input LIKE ? OR polished LIKE ?)")
+        params.extend([pattern, pattern])
+    if template_type:
+        clauses.append("template_type = ?")
+        params.append(template_type)
+    if date_from:
+        clauses.append("date >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("date <= ?")
+        params.append(date_to)
+    return (" WHERE " + " AND ".join(clauses) if clauses else "", params)
 
-    Used by Phase 6 Streamlit history view (STORE-02).
-    Returns empty list if no reports exist.
+
+def get_all_reports(
+    *,
+    query: str | None = None,
+    template_type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict]:
+    """Return filtered reports ordered by date DESC (most recent first).
+
+    Calling without arguments preserves the original all-records behavior.
     """
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive")
+    if offset < 0:
+        raise ValueError("offset must not be negative")
+
+    where_sql, params = _report_filter_sql(
+        query=query,
+        template_type=template_type,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    sql = (
+        "SELECT id, report_id, date, template_type, raw_input, polished, "
+        "export_path, created_at FROM reports"
+        f"{where_sql} ORDER BY date DESC, created_at DESC, id DESC"
+    )
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    elif offset:
+        sql += " LIMIT -1 OFFSET ?"
+        params.append(offset)
+
     with _db(DB_PATH) as conn:
-        rows = conn.execute(
-            "SELECT id, report_id, date, template_type, raw_input, polished, "
-            "export_path, created_at FROM reports "
-            "ORDER BY date DESC, created_at DESC, id DESC"
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+
+def count_reports(
+    *,
+    query: str | None = None,
+    template_type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> int:
+    """Return the number of reports matching the history filters."""
+    where_sql, params = _report_filter_sql(
+        query=query,
+        template_type=template_type,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    with _db(DB_PATH) as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS total FROM reports{where_sql}", params
+        ).fetchone()
+        return int(row["total"])
+
+
+def get_report(report_id: str) -> dict | None:
+    """Return one persisted report by its stable report id."""
+    if not report_id:
+        return None
+    with _db(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, report_id, date, template_type, raw_input, polished, "
+            "export_path, created_at FROM reports WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()
+        return dict(row) if row else None

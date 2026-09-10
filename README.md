@@ -133,9 +133,9 @@ Open **http://localhost:8501** in your browser.
 2. Optionally paste a git repo path and author/email to pull in only your commits from the configured work-day timezone
 3. Optionally paste raw data/metrics for the agent to extract and include
 4. Click **生成日报** — the agent runs through all nodes and pauses for your review
-5. Read the draft, edit inline if needed, then **接受** or **修改**（up to 3 applied revision rounds; final save always requires approval）
+5. Read the draft and its deterministic fact warnings, edit inline if needed, then **接受** or **修改**（up to 3 applied revision rounds; final save always requires approval）
 6. The final report is saved to history and exported as a markdown file in `exports/`
-7. Past reports appear in the **历史记录** sidebar tab
+7. Past reports appear in the **历史记录** sidebar tab, with content search, template/date filters, and pagination
 8. If generation is interrupted or the browser closes during review, reopen it from **恢复未完成日报**
 
 ### Privacy and trust boundaries
@@ -189,6 +189,7 @@ exports/ + history.db
 | Revision limit (3×) | Applies all three revisions, then disables further model revisions while preserving manual edit and explicit approval |
 | Checkpoint recovery | Incomplete graph threads are discovered directly from the LangGraph checkpointer; retry and review use the same persisted state |
 | Stable data directory | `WORKDIARY_DATA_DIR` can place both databases and exports on a durable volume independent of the launch directory |
+| Pre-save fact warnings | Deterministic checks flag numbers absent from source material and missing metric disclosure without adding another model call |
 
 ---
 
@@ -208,6 +209,7 @@ workdiary-agent/
 │   ├── time_utils.py       # Shared work-day timezone calculation
 │   ├── paths.py            # Stable runtime database/export paths
 │   ├── redaction.py        # Best-effort secret redaction before LLM calls
+│   ├── quality.py          # Deterministic pre-save factual-risk checks
 │   ├── utils.py            # make_llm() factory + validate_repo_path()
 │   ├── nodes/
 │   │   ├── extract.py      # Structured extraction via with_structured_output

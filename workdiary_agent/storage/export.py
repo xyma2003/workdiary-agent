@@ -14,6 +14,18 @@ from ..paths import data_path
 EXPORTS_DIR = str(data_path("exports"))
 
 
+def export_path_for_report(date: str, report_id: str) -> str:
+    """Return the deterministic export path for a valid report identifier."""
+    safe_date = re.sub(r"[^0-9A-Za-z_-]", "-", str(date))[:32].strip("-_")
+    if not safe_date:
+        safe_date = "undated"
+    safe_identifier = re.sub(r"[^A-Za-z0-9_-]", "", report_id)[:12]
+    if not safe_identifier:
+        raise ValueError("report_id must contain a filename-safe character")
+    filename = f"daily_report_{safe_date}_{safe_identifier}.md"
+    return os.path.join(EXPORTS_DIR, filename)
+
+
 def save_markdown(polished: str, date: str, report_id: str | None = None) -> str:
     """Write a report to a unique, atomically-replaced Markdown file.
 
@@ -28,18 +40,26 @@ def save_markdown(polished: str, date: str, report_id: str | None = None) -> str
         str: Path to the written file.
     """
     os.makedirs(EXPORTS_DIR, exist_ok=True)
-    safe_date = re.sub(r"[^0-9A-Za-z_-]", "-", str(date))[:32].strip("-_")
-    if not safe_date:
-        safe_date = "undated"
     identifier = report_id or uuid.uuid4().hex
-    safe_identifier = re.sub(r"[^A-Za-z0-9_-]", "", identifier)[:12]
-    if not safe_identifier:
-        safe_identifier = uuid.uuid4().hex[:12]
-    filename = f"daily_report_{safe_date}_{safe_identifier}.md"
-    filepath = os.path.join(EXPORTS_DIR, filename)
+    try:
+        filepath = export_path_for_report(date, identifier)
+    except ValueError:
+        filepath = export_path_for_report(date, uuid.uuid4().hex)
     content = f"# 日报 {date}\n\n{polished}\n"
     temp_path = f"{filepath}.tmp"
     with open(temp_path, "w", encoding="utf-8") as f:
         f.write(content)
     os.replace(temp_path, filepath)
     return filepath
+
+
+def delete_markdown(date: str, report_id: str) -> bool:
+    """Delete the deterministic export for an abandoned, unpersisted report."""
+    try:
+        filepath = export_path_for_report(date, report_id)
+    except ValueError:
+        return False
+    if not os.path.isfile(filepath):
+        return False
+    os.remove(filepath)
+    return True

@@ -153,6 +153,75 @@ def test_get_all_reports_empty(tmp_path, monkeypatch):
     assert isinstance(reports, list)
 
 
+def test_history_filters_and_count(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_history_filters.db")
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+    sqlite_mod.save_report({
+        "report_id": "old-tech",
+        "date": "2026-04-20",
+        "template_type": "技术型",
+        "raw_input": "完成缓存优化",
+        "polished": "缓存命中率提升。",
+    })
+    sqlite_mod.save_report({
+        "report_id": "new-tech",
+        "date": "2026-04-24",
+        "template_type": "技术型",
+        "raw_input": "完成登录修复",
+        "polished": "登录错误率下降。",
+    })
+    sqlite_mod.save_report({
+        "report_id": "business",
+        "date": "2026-04-25",
+        "template_type": "业务型",
+        "raw_input": "客户访谈",
+        "polished": "输出客户需求清单。",
+    })
+
+    filters = {
+        "query": "登录",
+        "template_type": "技术型",
+        "date_from": "2026-04-21",
+        "date_to": "2026-04-30",
+    }
+    reports = sqlite_mod.get_all_reports(**filters)
+
+    assert [report["report_id"] for report in reports] == ["new-tech"]
+    assert sqlite_mod.count_reports(**filters) == 1
+
+
+def test_history_pagination_preserves_descending_order(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_history_pagination.db")
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+    for day in range(1, 5):
+        sqlite_mod.save_report({
+            "report_id": f"report-{day}",
+            "date": f"2026-04-{day:02d}",
+            "template_type": "混合型",
+            "raw_input": f"工作 {day}",
+            "polished": f"日报 {day}",
+        })
+
+    first_page = sqlite_mod.get_all_reports(limit=2)
+    second_page = sqlite_mod.get_all_reports(limit=2, offset=2)
+
+    assert [report["report_id"] for report in first_page] == ["report-4", "report-3"]
+    assert [report["report_id"] for report in second_page] == ["report-2", "report-1"]
+
+
+def test_get_report_returns_persisted_row(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_get_report.db")
+    monkeypatch.setattr(sqlite_mod, "DB_PATH", db_path)
+    sqlite_mod.save_report({
+        "report_id": "lookup-id",
+        "date": "2026-04-24",
+        "polished": "saved",
+    })
+
+    assert sqlite_mod.get_report("lookup-id")["polished"] == "saved"
+    assert sqlite_mod.get_report("missing") is None
+
+
 # ---------------------------------------------------------------------------
 # Markdown export tests
 # ---------------------------------------------------------------------------
@@ -211,6 +280,20 @@ def test_save_markdown_keeps_untrusted_date_inside_export_dir(tmp_path, monkeypa
     ])
     assert common_path == os.path.abspath(exports_dir)
     assert os.path.exists(path)
+
+
+def test_delete_markdown_removes_only_matching_export(tmp_path, monkeypatch):
+    import os
+
+    exports_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(export_mod, "EXPORTS_DIR", exports_dir)
+    target = export_mod.save_markdown("abandoned", "2026-04-25", "abandoned-id")
+    retained = export_mod.save_markdown("saved", "2026-04-25", "saved-id")
+
+    assert export_mod.delete_markdown("2026-04-25", "abandoned-id") is True
+    assert not os.path.exists(target)
+    assert os.path.exists(retained)
+    assert export_mod.delete_markdown("2026-04-25", "missing-id") is False
 
 
 # ---------------------------------------------------------------------------
