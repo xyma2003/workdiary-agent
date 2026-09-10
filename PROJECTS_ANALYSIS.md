@@ -228,6 +228,7 @@ route_divergence
 4. 生成初稿 → 从老板视角润色
 5. **暂停，让用户审阅、编辑、反馈**（HITL interrupt）
 6. 最多应用 3 次模型修改，用户明确接受后保存并导出 markdown
+7. 浏览器关闭或节点失败后，可从 SQLite checkpoint 恢复未完成日报
 
 ### 技术亮点
 
@@ -258,6 +259,9 @@ def get_graph(): ...
 if "thread_id" not in st.session_state:  # thread_id 只初始化一次
     st.session_state.thread_id = str(uuid.uuid4())
 ```
+
+每次新提交都会生成新的 `thread_id`，避免失败任务的旧 state 合并进下一篇日报；
+未完成 thread 直接从 LangGraph checkpointer 枚举并恢复，不维护第二套运行状态。
 
 **显式确认的修改上限：**
 1. `state.get("revision_count", 0)` 安全访问，默认 0
@@ -310,10 +314,14 @@ END
 - Git 提交按作者和用户时区过滤
 - 同日多份报告使用 report_id 隔离，SQLite 保存支持幂等重试
 - 模型供应商与 API Key 显式绑定，并增加 timeout/retry
+- 工作日期、Git 日界线和下载文件名统一使用用户时区
+- 新任务按 thread 隔离，支持失败节点重试与跨浏览器 session 恢复
+- UI 支持手动覆盖模板，模型调用前做常见凭证脱敏
 
 **仍待完成：**
-- TemplateRouterAgent 没有系统评测，分类准确率没有量化指标
+- TemplateRouterAgent 已有 30 条平衡标注集和评测脚本，但尚未运行真实供应商基线与人工复核
 - 缺少报告事实一致性校验、质量 Benchmark 和成本/延迟统计
+- 仍需使用真实模型完成多供应商端到端兼容性验证
 
 ### TDD 策略
 

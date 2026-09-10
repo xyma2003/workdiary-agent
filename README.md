@@ -2,7 +2,7 @@
 
 A LangGraph-based workflow that turns rough work notes into a polished, manager-friendly daily report with evidence-aware Git enrichment and explicit human approval.
 
-The agent structures your input, pulls in today's git commits as context, selects the right report template, drafts and refines the content from a manager's perspective, then pauses for your review. You can accept, edit, or request revisions (up to 3 rounds) before the report is saved and exported as a markdown file.
+The agent structures your input, pulls in today's git commits as context, selects (or lets you choose) a report template, drafts and refines the content from a manager's perspective, then pauses for your review. You can accept, edit, or request revisions (up to 3 rounds) before the report is saved and exported as a markdown file. Interrupted runs remain recoverable from their LangGraph checkpoints.
 
 Built as a portfolio project demonstrating: LangGraph state machine design, Human-in-the-Loop interrupt/resume with SQLite persistence, multi-node Pydantic structured outputs, and Streamlit UI integration.
 
@@ -82,6 +82,8 @@ LLM_PROVIDER=siliconflow
 SILICONFLOW_API_KEY=sk-...
 SILICONFLOW_MODEL=Qwen/Qwen3-32B
 WORKDIARY_TIMEZONE=Asia/Shanghai
+# Optional for deployments or when launching outside the repository directory
+# WORKDIARY_DATA_DIR=/absolute/path/to/workdiary-data
 ```
 
 Get a SiliconFlow key at https://cloud.siliconflow.cn/. See `.env.example` for all provider configurations.
@@ -127,17 +129,18 @@ Open **http://localhost:8501** in your browser.
 
 ## Usage
 
-1. Enter a rough description of your day (口语化输入, any style)
+1. Enter a rough description of your day (口语化输入, any style) and optionally choose a template instead of automatic routing
 2. Optionally paste a git repo path and author/email to pull in only your commits from the configured work-day timezone
 3. Optionally paste raw data/metrics for the agent to extract and include
 4. Click **生成日报** — the agent runs through all nodes and pauses for your review
 5. Read the draft, edit inline if needed, then **接受** or **修改**（up to 3 applied revision rounds; final save always requires approval）
 6. The final report is saved to history and exported as a markdown file in `exports/`
 7. Past reports appear in the **历史记录** sidebar tab
+8. If generation is interrupted or the browser closes during review, reopen it from **恢复未完成日报**
 
 ### Privacy and trust boundaries
 
-- Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Do not submit secrets or data your provider is not allowed to process.
+- Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Common credential formats are redacted before model calls, but this is best-effort; do not submit data your provider is not allowed to process. The original input remains stored locally in history after approval.
 - Git enrichment skips commit collection when it cannot resolve an explicit author/email or the repository's local `user.email` / `user.name`; it never attributes every contributor's commits to you.
 - User text and repository-derived text are delimited as untrusted source data in prompts. This reduces prompt-injection risk but is not a complete security boundary.
 - Repository paths are read from the machine running Streamlit. Keep the app local or add deployment-level access controls before exposing it to other users.
@@ -184,6 +187,8 @@ exports/ + history.db
 | interrupt() inside review node | Gives fine-grained control (pause mid-node with context payload); more flexible than compile-level `interrupt_before` |
 | Two SQLite files | `graph_state.db` is owned exclusively by LangGraph's SqliteSaver; mixing app data into it breaks serialisation |
 | Revision limit (3×) | Applies all three revisions, then disables further model revisions while preserving manual edit and explicit approval |
+| Checkpoint recovery | Incomplete graph threads are discovered directly from the LangGraph checkpointer; retry and review use the same persisted state |
+| Stable data directory | `WORKDIARY_DATA_DIR` can place both databases and exports on a durable volume independent of the launch directory |
 
 ---
 
@@ -194,10 +199,15 @@ workdiary-agent/
 ├── app.py                  # Streamlit UI — generation page + history page
 ├── pyproject.toml          # Package metadata, dependencies, pytest markers
 ├── .github/workflows/      # Offline test CI
+├── evals/                  # Labeled AI-quality evaluation cases
 ├── requirements.txt
 ├── workdiary_agent/
 │   ├── graph.py            # StateGraph assembly, conditional edges, checkpointer init
 │   ├── state.py            # AgentState TypedDict + StructuredInfo Pydantic model
+│   ├── recovery.py         # Discover incomplete checkpoint threads
+│   ├── time_utils.py       # Shared work-day timezone calculation
+│   ├── paths.py            # Stable runtime database/export paths
+│   ├── redaction.py        # Best-effort secret redaction before LLM calls
 │   ├── utils.py            # make_llm() factory + validate_repo_path()
 │   ├── nodes/
 │   │   ├── extract.py      # Structured extraction via with_structured_output
@@ -215,7 +225,8 @@ workdiary-agent/
 │       └── export.py       # Markdown file export to exports/
 ├── scripts/                # Manual integration test scripts
 │   ├── test_hitl_cycle.py
-│   └── test_skeleton.py
+│   ├── test_skeleton.py
+│   └── evaluate_router.py  # Live routing accuracy/latency benchmark
 ├── tests/                  # pytest unit tests (5 phases)
 │   ├── test_graph_skeleton.py
 │   ├── test_phase02_llm_nodes.py
@@ -235,7 +246,15 @@ python -m pytest tests/ -m "not integration" -v
 
 # Live provider checks (requires a configured .env and incurs model calls)
 python -m pytest tests/ -m integration -v
+
+# Labeled router benchmark; the router makes two model calls per case
+python scripts/evaluate_router.py --limit 3
+python scripts/evaluate_router.py --output eval-results/router.json
 ```
+
+The routing dataset contains 30 balanced cases across the three templates.
+Do not claim an accuracy number until the benchmark has been run against the
+specific provider/model being discussed and the boundary labels have been reviewed.
 
 ---
 

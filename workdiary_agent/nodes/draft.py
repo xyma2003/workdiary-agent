@@ -12,6 +12,7 @@ TMPL-03: template_type is always read from state — never hardcoded.
 """
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..redaction import redact_secrets
 from ..state import AgentState
 from ..utils import make_llm
 
@@ -98,7 +99,7 @@ def draft_node(state: AgentState) -> dict:
         blockers_str = "\n".join(f"- {b}" for b in blockers) or "（无）"
         progress_str = progress or "（未提供）"
         context = (
-            f"<raw_input>\n{raw_input}\n</raw_input>\n\n"
+            f"<raw_input>\n{redact_secrets(raw_input)}\n</raw_input>\n\n"
             f"结构化信息：\n"
             f"任务：\n{tasks_str}\n"
             f"产出：\n{outputs_str}\n"
@@ -106,22 +107,24 @@ def draft_node(state: AgentState) -> dict:
             f"整体进度：{progress_str}"
         )
     else:
-        context = f"<raw_input>\n{raw_input}\n</raw_input>"
+        context = f"<raw_input>\n{redact_secrets(raw_input)}\n</raw_input>"
 
     # Phase 3 (D-11): append enrichment context when available
     git_log = state.get("git_log")
     if git_log:
-        context += f"\n<git_commits>\n{git_log}\n</git_commits>"
+        context += f"\n<git_commits>\n{redact_secrets(git_log)}\n</git_commits>"
 
     data_summary = state.get("data_summary")
     if data_summary:
-        context += f"\n<data_metrics>\n{data_summary}\n</data_metrics>"
+        context += f"\n<data_metrics>\n{redact_secrets(data_summary)}\n</data_metrics>"
 
     system_prompt = _TEMPLATE_PROMPTS.get(template_type, _MIXED_SYSTEM) + _SOURCE_POLICY
 
     llm = make_llm()
     response = llm.invoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"请根据以下信息生成日报初稿：\n\n{context}"),
+        HumanMessage(
+            content=f"请根据以下信息生成日报初稿：\n\n{redact_secrets(context)}"
+        ),
     ])
     return {"draft": response.content}

@@ -9,10 +9,10 @@ D-07: sets export_path in returned state dict for Phase 6 UI
 IMPORTANT: history.db (this node) and graph_state.db (LangGraph SqliteSaver)
 are SEPARATE files. This node NEVER touches graph_state.db.
 """
-import datetime
 import uuid
 from ..state import AgentState
 from ..storage import save_report, save_markdown
+from ..time_utils import work_date
 
 
 def save_node(state: AgentState) -> dict:
@@ -27,7 +27,7 @@ def save_node(state: AgentState) -> dict:
     # Prefer user-edited text over AI-generated polished version
     edited_text = state.get("edited_text")
     polished = edited_text if edited_text is not None else (state.get("polished", "") or "")
-    report_date = state.get("date") or datetime.date.today().isoformat()
+    report_date = state.get("date") or work_date(state.get("timezone"))
     report_id = state.get("report_id") or uuid.uuid4().hex
 
     # Use report_id in both destinations. SQLite's unique index makes a retry

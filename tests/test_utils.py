@@ -4,7 +4,11 @@ from unittest.mock import patch
 
 import pytest
 
-from workdiary_agent.utils import LLMConfigurationError, make_llm
+from workdiary_agent.utils import (
+    LLMConfigurationError,
+    make_llm,
+    validate_llm_configuration,
+)
 
 
 _CONFIG_KEYS = (
@@ -55,6 +59,24 @@ def test_missing_provider_configuration_is_actionable(monkeypatch):
 
     with pytest.raises(LLMConfigurationError, match="Set LLM_PROVIDER"):
         make_llm()
+
+
+def test_configuration_can_be_preflighted_without_constructing_client(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "configured")
+
+    assert validate_llm_configuration() == "openai"
+
+
+def test_configuration_rejects_invalid_runtime_limits(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "configured")
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "0")
+
+    with pytest.raises(LLMConfigurationError, match="must be positive"):
+        validate_llm_configuration()
 
 
 def test_anthropic_auth_token_becomes_bearer_header(monkeypatch):

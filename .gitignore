@@ -23,6 +23,7 @@ graph_state.db
 
 # Exported reports (generated at runtime)
 exports/
+eval-results/
 
 # IDE and OS
 .DS_Store

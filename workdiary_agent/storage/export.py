@@ -8,7 +8,10 @@ import os
 import re
 import uuid
 
-EXPORTS_DIR = "exports"
+from ..paths import data_path
+
+
+EXPORTS_DIR = str(data_path("exports"))
 
 
 def save_markdown(polished: str, date: str, report_id: str | None = None) -> str:

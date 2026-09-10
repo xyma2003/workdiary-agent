@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock
 from langgraph.types import Command
 from workdiary_agent.graph import build_graph, route_after_revise, route_after_review
 from workdiary_agent.nodes.polish import polish_node
+from workdiary_agent.recovery import list_recoverable_runs
 from workdiary_agent.state import StructuredInfo
 
 
@@ -104,6 +105,9 @@ def test_graph_pauses_at_review():
         "Expected '__interrupt__' key in result when graph pauses at interrupt(). "
         "review_node stub returns immediately without interrupt()."
     )
+    recoverable = list_recoverable_runs(g)
+    assert recoverable[0]["thread_id"] == "test-sc1"
+    assert recoverable[0]["status"] == "reviewing"
 
 
 def test_approve_path():

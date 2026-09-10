@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .graph_constants import MAX_REVISIONS
+from .paths import data_path
 from .state import AgentState
 from .nodes import (
     extract_node,
@@ -123,7 +124,9 @@ def build_graph(use_sqlite: bool = False):
         # Direct connection pattern — avoids from_conn_string() context manager issue.
         # from_conn_string() is a @contextmanager; without 'with' it returns
         # _GeneratorContextManager which fails at builder.compile(). (Pitfall 3)
-        conn = sqlite3.connect("graph_state.db", check_same_thread=False)
+        checkpoint_path = data_path("graph_state.db")
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
         checkpointer = SqliteSaver(conn)
     else:
         checkpointer = InMemorySaver()

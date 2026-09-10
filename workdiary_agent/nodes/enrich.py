@@ -12,13 +12,13 @@ Node signature follows project convention: def xxx_node(state: AgentState) -> di
 """
 from datetime import datetime, timedelta
 import logging
-import os
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import git
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..redaction import redact_secrets
 from ..state import AgentState
+from ..time_utils import resolve_timezone
 from ..utils import make_llm, validate_repo_path
 
 
@@ -43,17 +43,6 @@ _DATA_EXTRACT_SYSTEM = """你是一个数据指标提取助手。请从用户粘
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_timezone(timezone_name: str | None):
-    """Return the requested timezone, falling back to the machine's local zone."""
-    requested = (timezone_name or os.environ.get("WORKDIARY_TIMEZONE", "")).strip()
-    if requested:
-        try:
-            return ZoneInfo(requested)
-        except ZoneInfoNotFoundError:
-            logger.warning("Unknown timezone %r; using the system timezone", requested)
-    return datetime.now().astimezone().tzinfo
 
 
 def _resolve_git_author(repo: git.Repo, requested_author: str | None) -> str | None:
@@ -97,7 +86,7 @@ def _read_git_log(
             logger.warning("Skipping git enrichment because no author is configured")
             return None
 
-        tz = _resolve_timezone(timezone_name)
+        tz = resolve_timezone(timezone_name)
         now = datetime.now(tz)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -140,7 +129,12 @@ def _extract_data_summary(data_input: str) -> str | None:
     llm = make_llm()
     response = llm.invoke([
         SystemMessage(content=_DATA_EXTRACT_SYSTEM),
-        HumanMessage(content=f"请提取 <data_input> 中的指标：\n<data_input>\n{data_input}\n</data_input>"),
+        HumanMessage(
+            content=(
+                "请提取 <data_input> 中的指标：\n<data_input>\n"
+                f"{redact_secrets(data_input)}\n</data_input>"
+            )
+        ),
     ])
     content = response.content
     if not content or content.strip() == "无有效数字指标":

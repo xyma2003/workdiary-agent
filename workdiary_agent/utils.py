@@ -1,6 +1,7 @@
 # workdiary_agent/utils.py
 """Shared utilities for WorkDiary Agent nodes."""
 import os
+import math
 from pathlib import Path
 
 
@@ -16,7 +17,60 @@ def _runtime_options() -> tuple[float, int]:
         raise LLMConfigurationError(
             "LLM_TIMEOUT_SECONDS and LLM_MAX_RETRIES must be numeric"
         ) from exc
+    if not math.isfinite(timeout) or timeout <= 0 or retries < 0:
+        raise LLMConfigurationError(
+            "LLM_TIMEOUT_SECONDS must be positive and LLM_MAX_RETRIES must be non-negative"
+        )
     return timeout, retries
+
+
+def _resolve_provider() -> str:
+    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if provider:
+        return provider
+    if os.environ.get("SILICONFLOW_API_KEY"):
+        return "siliconflow"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return "anthropic"
+    return ""
+
+
+def validate_llm_configuration() -> str:
+    """Validate local provider settings without making a network request."""
+    provider = _resolve_provider()
+    _runtime_options()
+
+    if provider == "siliconflow" and not os.environ.get("SILICONFLOW_API_KEY", "").strip():
+        raise LLMConfigurationError(
+            "LLM_PROVIDER=siliconflow requires SILICONFLOW_API_KEY"
+        )
+    if provider in {"openai", "openai-compatible"}:
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            raise LLMConfigurationError(
+                f"LLM_PROVIDER={provider} requires OPENAI_API_KEY"
+            )
+        if provider == "openai-compatible" and not os.environ.get(
+            "OPENAI_API_BASE", ""
+        ).strip():
+            raise LLMConfigurationError(
+                "LLM_PROVIDER=openai-compatible requires OPENAI_API_BASE"
+            )
+    elif provider == "anthropic":
+        if not (
+            os.environ.get("ANTHROPIC_API_KEY", "").strip()
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip()
+        ):
+            raise LLMConfigurationError(
+                "LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY or "
+                "ANTHROPIC_AUTH_TOKEN"
+            )
+    elif provider != "siliconflow":
+        raise LLMConfigurationError(
+            "Set LLM_PROVIDER to siliconflow, openai, openai-compatible, or anthropic"
+        )
+    return provider
 
 
 def make_llm():
@@ -34,23 +88,11 @@ def make_llm():
 
     ANTHROPIC_CUSTOM_HEADERS format — newline-separated 'Key: Value' pairs.
     """
-    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    if not provider:
-        if os.environ.get("SILICONFLOW_API_KEY"):
-            provider = "siliconflow"
-        elif os.environ.get("OPENAI_API_KEY"):
-            provider = "openai"
-        elif os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-            provider = "anthropic"
-
+    provider = validate_llm_configuration()
     timeout, max_retries = _runtime_options()
 
     if provider == "siliconflow":
         api_key = os.environ.get("SILICONFLOW_API_KEY", "").strip()
-        if not api_key:
-            raise LLMConfigurationError(
-                "LLM_PROVIDER=siliconflow requires SILICONFLOW_API_KEY"
-            )
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen3-32B"),
@@ -65,10 +107,6 @@ def make_llm():
 
     if provider in {"openai", "openai-compatible"}:
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        if not api_key:
-            raise LLMConfigurationError(
-                f"LLM_PROVIDER={provider} requires OPENAI_API_KEY"
-            )
         from langchain_openai import ChatOpenAI
         kwargs = {
             "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
@@ -78,18 +116,9 @@ def make_llm():
             "max_retries": max_retries,
         }
         base_url = os.environ.get("OPENAI_API_BASE", "").strip()
-        if provider == "openai-compatible" and not base_url:
-            raise LLMConfigurationError(
-                "LLM_PROVIDER=openai-compatible requires OPENAI_API_BASE"
-            )
         if base_url:
             kwargs["base_url"] = base_url
         return ChatOpenAI(**kwargs)
-
-    if provider != "anthropic":
-        raise LLMConfigurationError(
-            "Set LLM_PROVIDER to siliconflow, openai, openai-compatible, or anthropic"
-        )
 
     from langchain_anthropic import ChatAnthropic
     custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
@@ -102,10 +131,6 @@ def make_llm():
                 headers[k.strip()] = v.strip()
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip()
-    if not anthropic_key and not auth_token:
-        raise LLMConfigurationError(
-            "LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN"
-        )
     if auth_token and not anthropic_key:
         headers.setdefault("Authorization", f"Bearer {auth_token}")
     kwargs = {

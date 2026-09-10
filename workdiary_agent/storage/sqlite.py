@@ -8,12 +8,15 @@ DB_PATH is a module-level constant so tests can monkeypatch it:
     monkeypatch.setattr(sqlite_mod, "DB_PATH", str(tmp_path / "test.db"))
 """
 import sqlite3
-import datetime
+from datetime import datetime
 import uuid
 from contextlib import contextmanager
 from typing import Any, Generator
 
-DB_PATH = "history.db"
+from ..paths import data_path
+from ..time_utils import work_date
+
+DB_PATH = str(data_path("history.db"))
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS reports (
@@ -65,9 +68,9 @@ def save_report(state: Any) -> str:
     Uses state.get() so it works with both TypedDict and plain dict.
     """
     # Respect date passed in state (tests inject specific dates); fall back to today.
-    date = state.get("date") or datetime.date.today().isoformat()
+    date = state.get("date") or work_date(state.get("timezone"))
     report_id = state.get("report_id") or uuid.uuid4().hex
-    created_at = datetime.datetime.now().astimezone().isoformat()
+    created_at = datetime.now().astimezone().isoformat()
     raw_input = state.get("raw_input", "") or ""
     template_type = state.get("template_type", "") or ""
     polished = state.get("polished", "") or ""

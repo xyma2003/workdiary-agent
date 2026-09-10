@@ -2,6 +2,7 @@
 """Extract node: parse raw Chinese work description into StructuredInfo via LLM."""
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..redaction import redact_secrets
 from ..state import AgentState, StructuredInfo
 from ..utils import make_llm
 
@@ -28,7 +29,12 @@ def extract_node(state: AgentState) -> dict:
 
     messages = [
         SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=f"请提取 <work_log> 中的信息：\n<work_log>\n{raw_input}\n</work_log>"),
+        HumanMessage(
+            content=(
+                "请提取 <work_log> 中的信息：\n<work_log>\n"
+                f"{redact_secrets(raw_input)}\n</work_log>"
+            )
+        ),
     ]
     result: StructuredInfo = structured_llm.invoke(messages)
     return {"structured_info": result.model_dump()}

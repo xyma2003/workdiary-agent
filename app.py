@@ -1,22 +1,18 @@
-"""
-app.py — 智能日报 Agent Streamlit application.
-
-Plan 06-01: Scaffold with session_state init, sidebar navigation, input form, and cached graph.
-Plan 06-02: Full generation flow — graph invoke with st.status node labels, interrupt detection,
-            HITL review UI with editable text_area, accept/revise/export buttons.
-Subsequent plans (06-03) extend this file with history page logic.
-"""
+"""Streamlit UI for generation, checkpoint recovery, review, and history."""
 import os
 import uuid
-from datetime import date
 import streamlit as st
 from dotenv import load_dotenv
 from langgraph.types import Command
+
+load_dotenv(override=False)  # load runtime paths/config before project modules
+
 from workdiary_agent.graph import build_graph
 from workdiary_agent.graph_constants import MAX_REVISIONS
+from workdiary_agent.recovery import list_recoverable_runs
 from workdiary_agent.storage.sqlite import get_all_reports
-
-load_dotenv(override=False)  # deployment/shell configuration takes precedence over local .env
+from workdiary_agent.time_utils import work_date
+from workdiary_agent.utils import LLMConfigurationError, validate_llm_configuration
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +58,52 @@ def _stream_graph(graph_input, config, status_ui=None):
     return dict(graph_state.values), interrupt_payload, "review" in (graph_state.next or [])
 
 
+def _activate_checkpoint(thread_id: str) -> None:
+    """Attach this browser session to an incomplete persisted graph thread."""
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = get_graph().get_state(config)
+    if not snapshot.next:
+        st.warning("该任务已经完成或不存在。")
+        return
+
+    st.session_state.thread_id = thread_id
+    st.session_state.result = dict(snapshot.values or {})
+    st.session_state._show_feedback = False
+    if "review" in snapshot.next:
+        st.session_state.app_state = "reviewing"
+        st.session_state._resume_existing = False
+    else:
+        st.session_state.app_state = "generating"
+        st.session_state._resume_existing = True
+    st.rerun()
+
+
+def _render_recoverable_runs() -> None:
+    """Show unfinished checkpoint threads that can be reopened or retried."""
+    try:
+        runs = list_recoverable_runs(get_graph())
+    except Exception:
+        import logging
+        logging.exception("Failed to list recoverable runs")
+        return
+    if not runs:
+        return
+
+    with st.expander(f"恢复未完成日报（{len(runs)}）", expanded=False):
+        for run in runs:
+            status = "待审阅" if run["status"] == "reviewing" else "待重试"
+            preview = run["raw_input"].replace("\n", " ")[:60]
+            label = f"{run.get('date') or '未定日期'} · {status} · {preview}"
+            col_text, col_action = st.columns([5, 1])
+            col_text.caption(label)
+            if col_action.button(
+                "恢复",
+                key=f"recover_{run['thread_id']}",
+                use_container_width=True,
+            ):
+                _activate_checkpoint(run["thread_id"])
+
+
 # ---------------------------------------------------------------------------
 # Page renderers (defined before routing so names are available at call time)
 # ---------------------------------------------------------------------------
@@ -77,6 +119,11 @@ def _render_generate_page():
             placeholder="今天完成了登录模块开发，解决了token过期的bug...",
             height=150,
             key="raw_input_field",
+        )
+        template_choice = st.selectbox(
+            "日报模板",
+            ["自动判断", "技术型", "业务型", "混合型"],
+            key="template_choice_field",
         )
         repo_path = st.text_input(
             "Git 仓库路径（可选）",
@@ -107,13 +154,25 @@ def _render_generate_page():
         if not raw_input.strip():
             st.error("请填写工作描述（必填）")
             return
-        # Store inputs for use by generation logic (Plan 06-02 will invoke graph here)
+        try:
+            validate_llm_configuration()
+        except LLMConfigurationError as exc:
+            st.error(f"模型配置不完整：{exc}")
+            return
+        # Every submission gets a fresh checkpoint thread. Failed or unfinished
+        # threads remain separately recoverable instead of leaking state here.
+        st.session_state.thread_id = str(uuid.uuid4())
         st.session_state._pending_raw_input = raw_input.strip()
         st.session_state._pending_repo_path = repo_path.strip() or None
         st.session_state._pending_git_author = git_author.strip() or None
         st.session_state._pending_timezone = timezone.strip() or None
+        st.session_state._pending_template_type = (
+            None if template_choice == "自动判断" else template_choice
+        )
+        st.session_state._pending_report_date = work_date(timezone.strip() or None)
         st.session_state._pending_data_input = data_input.strip() or None
         st.session_state._pending_report_id = uuid.uuid4().hex
+        st.session_state._resume_existing = False
         st.session_state.app_state = "generating"
         st.rerun()
 
@@ -121,6 +180,8 @@ def _render_generate_page():
     # (Plan 06-02 will fill in _render_status_and_review())
     if st.session_state.app_state != "idle":
         _render_status_and_review()
+    else:
+        _render_recoverable_runs()
 
 
 def _render_status_and_review():
@@ -132,6 +193,9 @@ def _render_status_and_review():
     if st.session_state.app_state == "reviewing":
         _render_review_ui()
 
+    if st.session_state.app_state == "failed":
+        _render_failure_ui()
+
     if st.session_state.app_state == "done":
         st.success("日报已完成并保存。")
         if st.button("重新生成", key="restart_btn"):
@@ -140,41 +204,52 @@ def _render_status_and_review():
             st.session_state.app_state = "idle"
             st.session_state.result = None
             st.session_state._show_feedback = False
+            st.session_state._resume_existing = False
             st.rerun()
 
 
 def _run_generation():
     """Invokes the graph and shows st.status node progress labels (D-11, D-12, D-13)."""
     config = {"configurable": {"thread_id": st.session_state.thread_id}}
-    raw_input  = st.session_state._pending_raw_input
-    repo_path  = st.session_state._pending_repo_path
-    git_author = st.session_state._pending_git_author
-    timezone = st.session_state._pending_timezone
-    data_input = st.session_state._pending_data_input
-    report_id = st.session_state._pending_report_id
+    resume_existing = st.session_state.get("_resume_existing", False)
+    if resume_existing:
+        graph_input = None
+        report_id = (st.session_state.result or {}).get("report_id")
+    else:
+        raw_input = st.session_state._pending_raw_input
+        repo_path = st.session_state._pending_repo_path
+        git_author = st.session_state._pending_git_author
+        timezone = st.session_state._pending_timezone
+        data_input = st.session_state._pending_data_input
+        report_id = st.session_state._pending_report_id
+        graph_input = {
+            "raw_input": raw_input,
+            "repo_path": repo_path,
+            "git_author": git_author,
+            "timezone": timezone,
+            "template_type": st.session_state._pending_template_type,
+            "data_input": data_input,
+            "date": st.session_state._pending_report_date,
+            "report_id": report_id,
+            "feedback_history": [],
+            "revision_count": 0,
+        }
 
     with st.status("正在生成日报...", expanded=True) as status_ui:
         try:
             result, interrupt_payload, is_reviewing = _stream_graph(
-                {
-                    "raw_input": raw_input,
-                    "repo_path": repo_path,
-                    "git_author": git_author,
-                    "timezone": timezone,
-                    "data_input": data_input,
-                    "report_id": report_id,
-                    "feedback_history": [],
-                    "revision_count": 0,
-                },
+                graph_input,
                 config,
                 status_ui,
             )
-        except Exception as e:
+        except Exception:
             import logging
             logging.exception("Graph invoke failed")
             status_ui.update(label="生成失败，请重试", state="error")
-            st.session_state.app_state = "idle"
-            st.error("生成日报时出现错误，请稍后重试。如问题持续请检查 API 配置。")
+            snapshot = get_graph().get_state(config)
+            st.session_state.result = dict(snapshot.values or {})
+            st.session_state._resume_existing = True
+            st.session_state.app_state = "failed"
             return
 
         if is_reviewing:
@@ -185,21 +260,48 @@ def _run_generation():
             )
 
             st.session_state.result = {
+                **result,
                 "polished": polished,
                 "template_type": template_type,
                 "revision_count": revision_count,
                 "report_id": result.get("report_id", report_id),
                 "interrupt_payload": interrupt_payload,
             }
+            st.session_state._resume_existing = False
             st.session_state.app_state = "reviewing"
             status_ui.update(label="生成完成，请审阅", state="complete", expanded=False)
             st.rerun()
         else:
             # Graph completed without interrupt (edge case — no review pause)
             st.session_state.result = result
+            st.session_state._resume_existing = False
             st.session_state.app_state = "done"
             status_ui.update(label="生成完成", state="complete", expanded=False)
             st.rerun()
+
+
+def _render_failure_ui():
+    """Offer checkpoint-safe retry or explicit discard after a node failure."""
+    st.error("日报生成中断。可以从最近的节点重试，不会创建重复日报。")
+    col_retry, col_discard = st.columns(2)
+    if col_retry.button("重试当前日报", type="primary", use_container_width=True):
+        st.session_state._resume_existing = True
+        st.session_state.app_state = "generating"
+        st.rerun()
+    if col_discard.button("放弃当前日报", use_container_width=True):
+        try:
+            get_graph().checkpointer.delete_thread(st.session_state.thread_id)
+        except Exception:
+            import logging
+            logging.exception("Failed to discard checkpoint thread")
+            st.error("删除未完成任务失败，请重试。")
+            return
+        st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.result = None
+        st.session_state._show_feedback = False
+        st.session_state._resume_existing = False
+        st.session_state.app_state = "idle"
+        st.rerun()
 
 
 def _render_review_ui():
@@ -248,10 +350,12 @@ def _render_review_ui():
                 st.session_state.result["polished"] = current_text
                 st.session_state.app_state = "done"
                 st.rerun()
-            except Exception as e:
+            except Exception:
                 import logging
                 logging.exception("Accept failed")
-                st.error("接受操作失败，请重试。")
+                st.session_state._resume_existing = True
+                st.session_state.app_state = "failed"
+                return
 
     # D-15 + D-17: Revise button — shows feedback input, then resumes with revise decision
     with col2:
@@ -265,6 +369,15 @@ def _render_review_ui():
 
     if revision_count >= MAX_REVISIONS:
         st.info("已达到修改上限，请直接编辑后接受；系统不会自动保存未经确认的版本。")
+
+    if result.get("git_log") or result.get("data_summary"):
+        with st.expander("本次生成依据", expanded=False):
+            if result.get("git_log"):
+                st.markdown("**Git commits**")
+                st.code(result["git_log"], language="text")
+            if result.get("data_summary"):
+                st.markdown("**数据指标**")
+                st.text(result["data_summary"])
 
     if st.session_state.get("_show_feedback"):
         feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")
@@ -289,6 +402,7 @@ def _render_review_ui():
                         new_polished = interrupt_payload.get("polished") or result2.get("polished", polished)
                         new_template = result2.get("template_type", template_type)
                         st.session_state.result = {
+                            **result2,
                             "polished": new_polished,
                             "template_type": new_template,
                             "revision_count": interrupt_payload.get(
@@ -303,19 +417,22 @@ def _render_review_ui():
                         st.session_state.result = dict(result2)
                         st.session_state.app_state = "done"
                     st.rerun()
-                except Exception as e:
+                except Exception:
                     import logging
                     logging.exception("Revise failed")
-                    st.error("重新生成失败，请重试。")
+                    st.session_state._resume_existing = True
+                    st.session_state.app_state = "failed"
+                    return
 
     # D-15 + D-19: Export download button — passes polished text directly (no file read, no reload)
     with col3:
         export_text = st.session_state.get(edit_key, polished) or polished
         export_id = (result.get("report_id") or st.session_state.thread_id)[:8]
+        report_date = result.get("date") or work_date(result.get("timezone"))
         st.download_button(
             label="⬇ 导出",
             data=export_text,
-            file_name=f"daily_report_{date.today()}_{export_id}.md",
+            file_name=f"daily_report_{report_date}_{export_id}.md",
             mime="text/markdown",
             use_container_width=True,
             key="export_btn",
@@ -375,7 +492,7 @@ st.set_page_config(page_title="智能日报 Agent", page_icon="📝", layout="wi
 
 # ---------------------------------------------------------------------------
 # session_state initialization — guarded with 'not in' so reruns don't reset them (SC-5)
-# All three keys must be initialized at module level (not inside any conditional branch)
+# Keys are initialized once per browser session and retained across reruns.
 # ---------------------------------------------------------------------------
 
 if "thread_id" not in st.session_state:
@@ -386,6 +503,8 @@ if "result" not in st.session_state:
     st.session_state.result = None
 if "_show_feedback" not in st.session_state:
     st.session_state._show_feedback = False
+if "_resume_existing" not in st.session_state:
+    st.session_state._resume_existing = False
 
 # ---------------------------------------------------------------------------
 # Sidebar navigation (D-01, D-02)

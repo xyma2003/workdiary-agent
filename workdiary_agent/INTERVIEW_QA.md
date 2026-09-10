@@ -81,7 +81,7 @@ if "thread_id" not in st.session_state:
 - 主动说出三个坑，证明是真实踩过的
 
 ### 瓶颈
-- `graph_state.db` 用相对路径，多用户场景会冲突（单用户工具可以接受）
+- `WORKDIARY_DATA_DIR` 解决了启动目录漂移，但多用户仍共享同一 checkpoint 存储
 - SqliteSaver 不支持并发写，高并发场景需要换 PostgreSQL checkpointer
 
 ### 突出的能力
@@ -91,14 +91,15 @@ if "thread_id" not in st.session_state:
 
 **追问：用户在审阅期间关掉了浏览器，下次打开还能继续吗？**
 
-**不能，因为 `thread_id` 存在 `session_state` 里，浏览器关掉后 session_state 清空，thread_id 丢失。**
+**可以。** `list_recoverable_runs()` 直接调用 checkpointer 的 `list()`，找到仍有
+`snapshot.next` 的 thread；审阅中的任务恢复到 review UI，节点失败的任务用
+`graph.stream(None, config)` 从最近 checkpoint 重试。
 
-虽然 `graph_state.db` 里的状态还在，但没有 thread_id 就找不回来。
-
-**理想方案**：把 thread_id 持久化到 `history.db` 的 sessions 表，或者让用户登录后绑定到账号。但这个项目是单用户工具，当前设计合理——不需要跨浏览器恢复。
+每次新建日报都会生成新的 `thread_id`，因此恢复旧任务不会污染新日报。
+当前仍是单用户模型：未完成 thread 没有绑定账号，多用户部署前必须增加身份隔离。
 
 **对面试官表述：**
-> "不能，thread_id 存在 session_state 里，浏览器关掉就丢了。graph_state.db 里的状态还在，但找不回来。如果要支持跨会话恢复，需要把 thread_id 持久化到数据库并和用户身份绑定。这个项目是单用户工具，当前设计是合理的权衡。"
+> "可以恢复。应用直接枚举 LangGraph checkpoint 中仍有 next node 的 thread，审阅任务重新打开编辑界面，失败任务从最近节点重试。没有再维护 sessions 表，因此不存在双重状态源；多用户版本仍需把 thread 与用户身份绑定。"
 
 ---
 
@@ -275,8 +276,8 @@ DB_PATH = "history.db"
 - 强调这是 Phase 1 的架构决策，体现了前期设计的意识
 
 ### 瓶颈
-- 两个 SQLite 文件都用相对路径，生产环境应该用绝对路径或配置项
-- 没有数据库迁移机制，表结构变更需要手动处理
+- 两个 SQLite 文件现在统一放在 `WORKDIARY_DATA_DIR`，但仍需部署方提供持久卷和备份策略
+- `history.db` 有轻量 schema migration；更复杂版本仍应引入正式迁移工具
 
 ### 突出的能力
 **框架层与应用层的边界意识** + **前期架构决策的系统性**
@@ -324,7 +325,7 @@ st.session_state.thread_id = str(uuid.uuid4())  # 没有 not in 判断
 这两种错误都会导致每次 rerun 都开始一个全新的图执行，interrupt 状态丢失。
 
 ### 如何对面试官表述
-> "Streamlit 每次 rerun 都重新执行整个 Python 文件，所以必须两层保护：graph 对象用 @st.cache_resource 缓存，只创建一次，跨 rerun 保持同一个实例；thread_id 用 not in guard 保证只初始化一次，rerun 时直接跳过。两个错误最容易犯：一是 build_graph() 没有缓存，每次 rerun 都重建；二是 thread_id 每次都重新生成，interrupt 状态就找不回来了。"
+> "Streamlit 每次 rerun 都重新执行整个 Python 文件，所以 graph 对象用 @st.cache_resource 缓存，当前任务的 thread_id 放在 session_state。新提交只生成一次新 thread_id，普通 rerun 不会改变；跨浏览器恢复则直接从 checkpointer 枚举旧 thread 并重新绑定。"
 
 ### 亮点
 - 不只说"用了 session_state"，而是说清楚了两层保护的具体机制
@@ -539,68 +540,36 @@ def invoke_with_retry(llm, messages):
 
 ### 代码中的实际方案
 
-**实际情况：没有系统评测。**
+**实际情况：评测基础设施已经建立，但还没有可信的真实供应商基线。**
 
-分类准确率完全依赖 prompt 质量（`workdiary_agent/router/agent.py` 中的 `_ANALYZE_SYSTEM` 和 `_DECIDE_SYSTEM`），没有测试集，没有量化指标。
+`evals/template_routing.json` 包含 30 条平衡标注样本，技术型、业务型和混合型各
+10 条。`scripts/evaluate_router.py` 会输出总体准确率、混淆矩阵、逐样本结果和延迟，
+并可通过 `--threshold` 作为回归门槛。
 
 Phase 4 的集成测试中用了 mock（`TemplateRouterAgent.classify` 返回固定值 "混合型"），所以测试覆盖不了真实的分类质量。
 
-**唯一的验证**是 Phase 2 的端到端 smoke test：
+Phase 2 仍保留 3 条真实模型 smoke test；默认 CI 只校验评测集结构和类别平衡，
+不会产生模型费用。真实基线需要显式执行：
 ```python
-tech_result = router.classify("今天实现了Redis缓存层，优化了SQL查询，修复了内存泄漏，写了单元测试")
-assert tech_result == "技术型"
-```
-3 个样本，不具有统计意义。
-
-### 理想方案（如果要做评测）
-
-**第一步：构建测试集**
-
-收集或构造 30-50 条有标注的工作描述样本，覆盖 3 种类型和边界情况：
-```python
-test_cases = [
-    {"input": "今天优化了 SQL 查询，响应时间从 200ms 降到 45ms", "expected": "技术型"},
-    {"input": "今天和客户对齐了 Q2 目标，GMV 增长 15%", "expected": "业务型"},
-    {"input": "完成了支付接口优化，降低超时率，同时跟进了商务合同", "expected": "混合型"},
-    # 边界：技术工作有业务影响
-    {"input": "今天修复了登录 bug，影响了 3000 个用户", "expected": "?"},
-]
+python scripts/evaluate_router.py --output eval-results/router.json
 ```
 
-**第二步：自动化评测**
-
-```python
-results = []
-for case in test_cases:
-    predicted = router.classify(case["input"])
-    results.append({"expected": case["expected"], "predicted": predicted, "correct": predicted == case["expected"]})
-
-accuracy = sum(r["correct"] for r in results) / len(results)
-print(f"准确率: {accuracy:.1%}")
-# 按类型分析
-for template_type in ["技术型", "业务型", "混合型"]:
-    subset = [r for r in results if r["expected"] == template_type]
-    type_acc = sum(r["correct"] for r in subset) / len(subset)
-    print(f"{template_type}: {type_acc:.1%}")
-```
-
-**第三步：bad case 分析**
-
-对分类错误的样本，用 LLM 分析根因：是 prompt 对某类型的描述不够清晰，还是样本本身就是边界情况？
+下一步应让两名人工独立复核边界样本，再分别对目标供应商运行基线，避免把单人标注
+直接当成真值。
 
 ### 如何对面试官表述
-> "坦白说，分类准确率没有做系统评测，是这个项目的明显缺口。目前只有 3 个样本的 smoke test，不具有统计意义。如果要完善，应该构建 30-50 条有标注的样本，按 3 种类型分别统计准确率，对 bad case 做根因分析，看是 prompt 的问题还是边界情况。这是 v2 要补的工作。"
+> "我已经建立了 30 条平衡标注样本和可重复评测脚本，会报告准确率、混淆矩阵和延迟；默认 CI 只校验数据集，不产生模型费用。目前还不能宣称具体准确率，因为目标供应商基线和双人标注复核尚未执行。"
 
 ### 亮点
-- 主动承认缺口，而不是回避
-- 提出了具体的改进方案，而不是说"以后再做"
+- 把评测从想法落成了数据集、脚本和门槛
+- 不在基线运行前虚报准确率
 
 ### 瓶颈
 - 混合型和技术型/业务型的边界本身就模糊，即使有评测，人工标注也会有分歧
 - 评测结果是离线的，不能反映真实用户输入的分布
 
 ### 突出的能力
-**AI 系统评测意识** + **主动识别技术债的诚实度**
+**AI 系统评测工程** + **指标表述的诚实度**
 
 ---
 
@@ -613,10 +582,11 @@ for template_type in ["技术型", "业务型", "混合型"]:
 
 ### 代码中的实际情况
 
-**P0（应该修但没修的）：**
+**P0（下一阶段必须验证的）：**
 
-**1. LLM 调用具备基础超时和 SDK 重试，但还缺少端到端降级**
-`make_llm()` 已统一配置 `LLM_TIMEOUT_SECONDS` 与 `LLM_MAX_RETRIES`。仍缺少按错误类型区分的退避策略、熔断和用户可恢复入口。
+**1. 多供应商真实端到端兼容性**
+配置预检、基础超时和 SDK 重试已经完成，失败节点也能从 checkpoint 重试；
+但仍需用真实 SiliconFlow/OpenAI/Anthropic 验证 structured output 与代理兼容性。
 
 **2. TemplateRouterAgent 没有评测**（见 Q9）
 
@@ -636,10 +606,10 @@ UI 已随真实节点事件更新状态，但单个 LLM 节点内部仍同步等
 
 **功能层面**：
 - 在 Streamlit 里加 streaming 输出，让用户看到日报逐步生成
-- 补充按错误类型区分的退避、熔断与恢复机制
+- 补充按错误类型区分的退避、熔断和跨供应商降级
 
 ### 如何对面试官表述
-> "有三个明显的技术债：第一，LLM 虽有基础超时和 SDK 重试，但缺少端到端降级与恢复；第二，模板分类没有评测，准确率未知；第三，节点进度已可见，但正文仍不是 token 级流式输出。
+> "有三个明显的技术债：第一，checkpoint 重试已完成，但真实供应商兼容性和跨供应商降级还没验证；第二，模板分类没有评测，准确率未知；第三，节点进度已可见，但正文仍不是 token 级流式输出。
 >
 > 如果再做一次，我会在 Phase 1 就把 make_llm() 放在 utils.py，因为我知道每个节点都会用到它。这次是因为 executor agent 独立实现各节点，最后才发现重复——这是多 agent 并行开发的副产品，下次会在 Phase 1 的架构设计里预先规划共享工具层。"
 
@@ -820,58 +790,40 @@ commits = repo.iter_commits(
 
 ### 代码中的实际方案
 
-`workdiary_agent/nodes/save.py:22, 32-34`：
+`workdiary_agent/nodes/save.py`：
 ```python
-polished = state.get("polished", "") or ""
-# ...
+edited_text = state.get("edited_text")
+polished = edited_text if edited_text is not None else state.get("polished", "")
 return {
-    "final_report": polished,   # ← 复制
+    "final_report": polished,
     "export_path": export_path,
 }
 ```
 
-`app.py:193-197`（inline edit 场景）：
+`app.py`（inline edit 场景）：
 ```python
-current_text = st.session_state.get("edit_area", polished)
-if current_text != polished:
-    st.session_state.result = dict(r)
-    st.session_state.result["polished"] = current_text  # ← 覆盖 polished
-else:
-    st.session_state.result = dict(r)
+current_text = st.session_state.get(edit_key, polished)
+r = graph.invoke(Command(resume={
+    "decision": "approve",
+    "edited_text": current_text,
+}), config)
 ```
 
-**关键问题**：用户 inline 编辑后点「接受」时，代码修改的是 `session_state.result["polished"]`，但 `graph.invoke(Command(resume={"decision": "approve"}))` 触发的 `save_node` 用的是图内部 state 的 `polished`，不是 session_state 里的修改版本。
-
-**所以**：`history.db` 里存的是**原始 polish 节点的输出**，不是用户编辑后的版本。`st.download_button` 导出的是编辑后的版本（`app.py:248`），但数据库里的是原版。
-
-这是一个**数据不一致 bug**：用户编辑了内容并接受，但数据库里存的不是他们接受的版本。
-
-### 理想方案
-
-在 Streamlit 层，`approve` 时把编辑后的内容传回图：
-```python
-# 方案：通过 feedback 传递编辑内容
-current_text = st.session_state.get("edit_area", polished)
-if current_text != polished:
-    # 把编辑后的内容通过 feedback 传回，让 save_node 用编辑版本
-    r = get_graph().invoke(
-        Command(resume={"decision": "approve", "feedback": "", "edited_content": current_text}),
-        config,
-    )
-```
-或者在 `save_node` 里优先读 `edited_content` 字段。
+编辑内容通过 `Command.resume` 写回 AgentState，`save_node`、Markdown 导出和
+`history.db` 都使用同一个 `edited_text`。重新生成时它也会成为下一轮 polish 的基稿，
+所以 UI、checkpoint、数据库和文件四处保持一致。
 
 ### 如何对面试官表述
 > "final_report 是 save_node 的输出，polished 是 polish 节点的输出，save_node 把 polished 复制到 final_report 作为最终锁定版本。
 >
-> 但这里有个 bug：用户 inline 编辑后点接受，编辑内容只存在 session_state 里，没有传回图。save_node 用的还是图内部的 polished，所以 history.db 里存的是原始版本，不是用户编辑后的版本。导出的文件是编辑版，数据库里是原版，两个不一致。"
+> 现在 inline edit 会通过 Command.resume 写回图状态。save_node 优先使用 edited_text，因此用户看到并接受的文本，就是 history.db 和 Markdown 中保存的最终文本；多轮修改也从用户当前编辑版继续，不会退回旧稿。"
 
 ### 亮点
-- 发现了 inline edit 场景下的数据不一致 bug
+- 修复了 inline edit 场景下的数据不一致 bug
 - 能追踪数据从 session_state 到 graph state 再到 history.db 的完整路径
 
 ### 瓶颈
-- 修复这个 bug 需要改变 Command(resume=...) 的接口，或者在 save_node 里增加对 edited_content 的支持
+- 目前还没有浏览器级自动化测试覆盖编辑、刷新、恢复和下载的完整交互
 
 ### 突出的能力
 **跨层数据一致性的追踪能力** + **HITL 流程中 UI 与图状态同步的深度理解**
@@ -892,7 +844,7 @@ if current_text != polished:
 builder.add_conditional_edges(
     "review",
     route_after_review,
-    {"save": "save", "revise": "revise"},   # ← 第三个参数
+    {"save": "save", "revise": "revise", "review": "review"},
 )
 ```
 
@@ -1064,7 +1016,7 @@ def get_graph():
 
 `workdiary_agent/graph.py:125-126`：
 ```python
-conn = sqlite3.connect("graph_state.db", check_same_thread=False)
+conn = sqlite3.connect(data_path("graph_state.db"), check_same_thread=False)
 checkpointer = SqliteSaver(conn)
 ```
 
@@ -1270,7 +1222,7 @@ LangGraph 1.x 支持异步节点，但需要 `graph.ainvoke()` 调用，Streamli
 
 ---
 
-## Q21：`save_node` 里 `save_report(state)` 和 `save_markdown(polished, today)` 如果一个成功一个失败，会怎样？
+## Q21：`save_node` 里 Markdown 导出和 SQLite 保存如果一个成功一个失败，会怎样？
 
 *（也可能被问成：save_node 的两个操作有原子性保证吗？如果 markdown 写入失败但数据库写入成功，怎么办？）*
 
@@ -1279,64 +1231,31 @@ LangGraph 1.x 支持异步节点，但需要 `graph.ainvoke()` 调用，Streamli
 
 ### 代码中的实际方案
 
-`workdiary_agent/nodes/save.py:25-29`：
+`workdiary_agent/nodes/save.py`：
 ```python
-save_report(state)           # ← 写 history.db
-export_path = save_markdown(polished, today)   # ← 写 exports/ 目录
+export_path = save_markdown(polished, report_date, report_id)
+save_report({**state, "report_id": report_id, "export_path": export_path})
 ```
 
-**没有任何事务保护**：两个操作是独立的，没有原子性保证。
+跨文件系统与 SQLite 仍然没有真正的事务，但当前流程具备**可安全重试**：
 
-**场景一：`save_report` 成功，`save_markdown` 失败**
-- `history.db` 里有记录，但 `exports/` 目录里没有文件
-- `export_path` 不会被写入 state（因为函数抛异常了）
-- 用户看到"生成失败"，但数据库里已经有了这条记录
-- 下次生成会再写一条新记录，数据库里出现重复
+- Markdown 先写临时文件，再用 `os.replace()` 原子替换。
+- 文件名包含稳定的 `report_id`。
+- SQLite 对 `report_id` 建唯一索引并使用 upsert。
+- 任一步失败后，UI 用同一 thread 从 save 节点重试，不会生成重复记录。
 
-**场景二：`save_report` 失败**
-- `save_markdown` 不会执行（Python 顺序执行，前面抛异常后面不跑）
-- `history.db` 里没有记录，`exports/` 也没有文件
-- 用户看到"生成失败"，数据丢失
-
-**代码中没有错误处理**：两个函数的异常都会向上传播，被 `app.py:125-131` 的通用 `except Exception` 捕获，显示"生成日报时出现错误"。
-
-### 理想方案
-
-**方案一：独立错误处理，最大化成功率**
-```python
-def save_node(state: AgentState) -> dict:
-    polished = state.get("polished", "") or ""
-    today = datetime.date.today().isoformat()
-    export_path = None
-
-    try:
-        save_report(state)
-    except Exception:
-        log.exception("Failed to save report to history.db")
-        # 不中断，继续尝试导出
-
-    try:
-        export_path = save_markdown(polished, today)
-    except Exception:
-        log.exception("Failed to export markdown")
-
-    return {"final_report": polished, "export_path": export_path}
-```
-
-**方案二：幂等写入，防止重复记录**
-在 `save_report` 里加 `INSERT OR IGNORE`（基于日期+raw_input 的唯一约束），防止重复写入。
+仍存在一个小窗口：进程可能在文件替换成功、数据库提交前崩溃，留下孤立文件；
+再次重试会修复一致性，但用户永久放弃任务时需要后台清理孤立文件。
 
 ### 如何对面试官表述
-> "两个操作没有原子性保证。最危险的场景是 save_report 成功但 save_markdown 失败——数据库里有记录，但文件没写出来，用户看到错误，下次重试会写入重复记录。
->
-> 修复方案有两个方向：独立错误处理，让两个操作互不影响，最大化成功率；或者加幂等约束，防止重复写入。对于这个项目，独立错误处理更合适——日志写入失败不应该影响文件导出，反之亦然。"
+> "文件和 SQLite 无法共享一个事务，所以我把目标改成可安全重试：文件使用临时文件加原子替换，数据库以 report_id upsert，失败后从同一 checkpoint 重跑 save。这样不会重复记录；只剩崩溃后孤立文件的清理问题。"
 
 ### 亮点
 - 识别了两种失败场景，而不是只说"可能出错"
-- 提出了"幂等写入"这个具体的技术方案
+- 落地了基于 `report_id` 的幂等写入和原子文件替换
 
 ### 瓶颈
-- 独立错误处理后，用户可能看到"生成成功"但实际上数据库写入失败了，需要在 UI 上有更细粒度的提示
+- 仍需增加孤立导出文件的定期清理或一致性扫描
 
 ### 突出的能力
 **事务和原子性意识** + **多步操作的一致性设计**
@@ -1356,22 +1275,14 @@ def save_node(state: AgentState) -> dict:
 ```python
 structured_llm = llm.with_structured_output(StructuredInfo)
 result: StructuredInfo = structured_llm.invoke(messages)
-return {"structured_info": result}   # ← Pydantic 对象写入 state
+return {"structured_info": result.model_dump()}
 ```
 
-**LangGraph 的 checkpointer 序列化**：
+Pydantic 只停留在 LLM structured-output 边界，进入 AgentState 前立即转成普通 dict。
+这样 checkpoint 不依赖自定义类型的反序列化白名单，也不会触发未来版本禁止
+unregistered type 的兼容性风险。
 
-SqliteSaver（和 InMemorySaver）使用 `msgpack` 序列化 AgentState，然后存储到数据库。
-
-**问题**：`StructuredInfo` 是 Pydantic `BaseModel` 的子类，不是原生 Python 类型。msgpack 不知道如何序列化它。
-
-**LangGraph 的处理方式**：LangGraph 1.x 有一个注册机制，允许自定义类型的序列化/反序列化。但 `StructuredInfo` 没有显式注册，会触发：
-```
-Deserializing unregistered type workdiary_agent.state.StructuredInfo from checkpoint.
-This will be blocked in a future version.
-```
-
-**这就是为什么测试里必须用真实 Pydantic 对象**（`tests/test_phase04_hitl.py:28-35`）：
+测试里的 LLM mock 仍返回真实 `StructuredInfo`：
 ```python
 mock_structured.invoke.return_value = StructuredInfo(
     tasks=["完成登录模块开发"],
@@ -1380,33 +1291,17 @@ mock_structured.invoke.return_value = StructuredInfo(
     progress="登录模块开发完成",
 )
 ```
-如果返回 `MagicMock()`，msgpack 无法序列化它，checkpointer 在 interrupt 时会失败。
-
-### 理想方案
-
-显式注册 StructuredInfo 到 LangGraph 的 msgpack 允许列表：
-```python
-# 在 graph.py 或 state.py 里
-import os
-allowed = os.environ.get("LANGGRAPH_ALLOWED_MSGPACK_MODULES", "")
-os.environ["LANGGRAPH_ALLOWED_MSGPACK_MODULES"] = (
-    allowed + ",workdiary_agent.state" if allowed else "workdiary_agent.state"
-)
-```
-或者等待 LangGraph 提供更好的 Pydantic 集成 API。
+它用于验证真实结构化输出边界；节点随后执行 `model_dump()`，checkpoint 中只有原生类型。
 
 ### 如何对面试官表述
-> "LangGraph 的 checkpointer 用 msgpack 序列化状态，但 Pydantic BaseModel 不是原生类型，没有显式注册就会触发'Deserializing unregistered type'的警告。这就是为什么测试里 mock 必须返回真实的 StructuredInfo 对象——如果返回 MagicMock，interrupt 时 checkpointer 序列化会失败。
->
-> 这个 warning 说明 LangGraph 目前是用 pickle-like 的方式处理未注册类型，在未来版本可能被 block。修复方案是显式注册 StructuredInfo 到 LANGGRAPH_ALLOWED_MSGPACK_MODULES 环境变量。"
+> "LLM 边界用 Pydantic 校验 StructuredInfo，但写入 AgentState 前立即 model_dump 成普通 dict。这样既保留结构化校验，又让 checkpoint 只序列化原生类型，不依赖自定义反序列化注册。"
 
 ### 亮点
-- 能解释 warning 的根本原因（msgpack 序列化 + 未注册类型）
-- 连接了 warning 和测试设计的关系，说明是真实踩过的
+- 把 Pydantic 限制在系统边界，内部状态保持可移植数据
+- 连接了序列化风险和测试设计
 
 ### 瓶颈
-- 环境变量方案是临时的，LangGraph 未来版本可能改变 API
-- 如果 StructuredInfo 的字段有嵌套的复杂类型，序列化问题会更复杂
+- 如果未来加入 datetime、Decimal 等复杂字段，仍需定义明确的 checkpoint 编码策略
 
 ### 突出的能力
 **LangGraph 序列化机制的深度理解** + **测试设计与运行时行为的关联分析**
@@ -1433,7 +1328,7 @@ if not raw_input.strip():
 **第二层：extract_node（workdiary_agent/nodes/extract.py:22-23）**
 ```python
 if not raw_input:
-    return {"structured_info": StructuredInfo()}   # 返回空的 StructuredInfo
+    return {"structured_info": StructuredInfo().model_dump()}
 ```
 如果 `raw_input` 为空（不应该到达这里，但作为防御），返回空的 StructuredInfo，不调用 LLM。
 

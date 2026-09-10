@@ -17,6 +17,7 @@ D-10: If no numbers or metrics are found in the draft, insert "（未提供量�
 """
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..redaction import redact_secrets
 from ..state import AgentState
 from ..utils import make_llm
 
@@ -61,7 +62,10 @@ def polish_node(state: AgentState) -> dict:
         return {"polished": base_text, "edited_text": None}
 
     llm = make_llm()
-    content = f"请润色 <report> 中的日报内容：\n<report>\n{base_text}\n</report>"
+    content = (
+        "请润色 <report> 中的日报内容：\n<report>\n"
+        f"{redact_secrets(base_text)}\n</report>"
+    )
     feedback_history = state.get("feedback_history", [])
     if feedback_history:
         numbered_feedback = "\n".join(
@@ -70,11 +74,14 @@ def polish_node(state: AgentState) -> dict:
         )
         content += (
             "\n\n请同时满足以下累计修改意见；后面的意见优先级更高："
-            f"\n<feedback>\n{numbered_feedback}\n</feedback>"
+            f"\n<feedback>\n{redact_secrets(numbered_feedback)}\n</feedback>"
         )
     elif state.get("human_feedback"):
         # Backward compatibility for callers that have not populated history.
-        content += f"\n\n请根据以下意见修改：\n<feedback>\n{state['human_feedback']}\n</feedback>"
+        content += (
+            "\n\n请根据以下意见修改：\n<feedback>\n"
+            f"{redact_secrets(state['human_feedback'])}\n</feedback>"
+        )
 
     response = llm.invoke([
         SystemMessage(content=_POLISH_SYSTEM),

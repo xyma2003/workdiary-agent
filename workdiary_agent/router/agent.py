@@ -12,6 +12,7 @@ from typing_extensions import TypedDict
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 
+from ..redaction import redact_secrets
 from ..utils import make_llm
 
 
@@ -44,7 +45,9 @@ def analyze_content_node(state: RouterState) -> dict:
     """Analyze work content and extract classification features."""
     raw = state.get("raw_input", "")
     si_text = state.get("structured_info_text", "")
-    combined = f"{raw}\n\n结构化摘要：{si_text}" if si_text else raw
+    safe_raw = redact_secrets(raw)
+    safe_summary = redact_secrets(si_text)
+    combined = f"{safe_raw}\n\n结构化摘要：{safe_summary}" if si_text else safe_raw
 
     llm = make_llm()
     response = llm.invoke([
@@ -63,8 +66,8 @@ def decide_template_node(state: RouterState) -> dict:
     response = llm.invoke([
         SystemMessage(content=_DECIDE_SYSTEM),
         HumanMessage(content=(
-            f"<content_features>\n{features}\n</content_features>\n\n"
-            f"<raw_input>\n{raw}\n</raw_input>"
+            f"<content_features>\n{redact_secrets(features)}\n</content_features>\n\n"
+            f"<raw_input>\n{redact_secrets(raw)}\n</raw_input>"
         )),
     ])
     # Normalize — strip whitespace, fall back to 混合型 if unexpected value
