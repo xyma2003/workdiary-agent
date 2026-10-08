@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS reports (
     raw_input TEXT,
     polished TEXT,
     export_path TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT
 )
 """
 
@@ -42,6 +43,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE reports ADD COLUMN report_id TEXT")
     if "export_path" not in existing:
         conn.execute("ALTER TABLE reports ADD COLUMN export_path TEXT")
+    if "updated_at" not in existing:
+        conn.execute("ALTER TABLE reports ADD COLUMN updated_at TEXT")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_report_id "
         "ON reports(report_id)"
@@ -77,7 +80,7 @@ def save_report(state: Any) -> str:
     # Respect date passed in state (tests inject specific dates); fall back to today.
     date = state.get("date") or work_date(state.get("timezone"))
     report_id = state.get("report_id") or uuid.uuid4().hex
-    created_at = datetime.now().astimezone().isoformat()
+    now = datetime.now().astimezone().isoformat()
     raw_input = state.get("raw_input", "") or ""
     template_type = state.get("template_type", "") or ""
     polished = state.get("polished", "") or ""
@@ -86,12 +89,12 @@ def save_report(state: Any) -> str:
     with _db(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO reports "
-            "(report_id, date, template_type, raw_input, polished, export_path, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "(report_id, date, template_type, raw_input, polished, export_path, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(report_id) DO UPDATE SET "
             "date=excluded.date, template_type=excluded.template_type, "
             "raw_input=excluded.raw_input, polished=excluded.polished, "
-            "export_path=excluded.export_path, created_at=excluded.created_at",
+            "export_path=excluded.export_path, updated_at=excluded.updated_at",
             (
                 report_id,
                 date,
@@ -99,7 +102,8 @@ def save_report(state: Any) -> str:
                 raw_input,
                 polished,
                 export_path,
-                created_at,
+                now,
+                now,
             ),
         )
         conn.commit()
@@ -158,7 +162,7 @@ def get_all_reports(
     )
     sql = (
         "SELECT id, report_id, date, template_type, raw_input, polished, "
-        "export_path, created_at FROM reports"
+        "export_path, created_at, updated_at FROM reports"
         f"{where_sql} ORDER BY date DESC, created_at DESC, id DESC"
     )
     if limit is not None:
@@ -201,7 +205,58 @@ def get_report(report_id: str) -> dict | None:
     with _db(DB_PATH) as conn:
         row = conn.execute(
             "SELECT id, report_id, date, template_type, raw_input, polished, "
-            "export_path, created_at FROM reports WHERE report_id = ?",
+            "export_path, created_at, updated_at FROM reports WHERE report_id = ?",
             (report_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def get_report_by_id(record_id: int) -> dict | None:
+    """Return one persisted report by its database primary key."""
+    with _db(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, report_id, date, template_type, raw_input, polished, "
+            "export_path, created_at, updated_at FROM reports WHERE id = ?",
+            (record_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_report_by_id(
+    record_id: int,
+    *,
+    report_id: str,
+    date: str,
+    template_type: str,
+    raw_input: str,
+    polished: str,
+    export_path: str,
+) -> bool:
+    """Update one saved report and return whether the row still existed."""
+    updated_at = datetime.now().astimezone().isoformat()
+    with _db(DB_PATH) as conn:
+        cursor = conn.execute(
+            "UPDATE reports SET report_id = ?, date = ?, template_type = ?, "
+            "raw_input = ?, polished = ?, export_path = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                report_id,
+                date,
+                template_type,
+                raw_input,
+                polished,
+                export_path,
+                updated_at,
+                record_id,
+            ),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
+
+
+def delete_report_by_id(record_id: int) -> bool:
+    """Delete one saved report and return whether a row was removed."""
+    with _db(DB_PATH) as conn:
+        cursor = conn.execute("DELETE FROM reports WHERE id = ?", (record_id,))
+        conn.commit()
+        return cursor.rowcount == 1

@@ -68,3 +68,20 @@ def delete_markdown(date: str, report_id: str) -> bool:
         return False
     os.remove(filepath)
     return True
+
+
+def delete_export_path(filepath: str | None) -> bool:
+    """Delete a stored export path only when it remains inside EXPORTS_DIR."""
+    if not filepath:
+        return False
+    export_root = os.path.realpath(EXPORTS_DIR)
+    target = os.path.realpath(filepath)
+    try:
+        if os.path.commonpath([export_root, target]) != export_root:
+            return False
+    except ValueError:
+        return False
+    if not os.path.isfile(target):
+        return False
+    os.remove(target)
+    return True

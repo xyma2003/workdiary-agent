@@ -3,7 +3,7 @@
 > 格式参考 Peppr Ava 题库：每题包含考查点、代码实际方案、理想方案/进步空间、如何表述、亮点/瓶颈、突出能力，以及层层追问。
 > 核心原则：**主动暴露复杂度，主动说出进步空间，而不是等面试官追问。**
 >
-> 更新说明（v0.2）：HITL 上限、feedback 累积、Git 归属、测试隔离和模型配置已完成可靠性重构；以下代码片段以当前仓库为准。
+> 更新说明（v0.3）：在 HITL、Git 归属和可靠性重构基础上，历史日报已补齐 CRUD，并保持 SQLite 与 Markdown 导出同步；以下代码片段以当前仓库为准。
 
 ---
 
@@ -252,8 +252,8 @@ if state.get("template_type") in {"技术型", "业务型", "混合型"}:
 
 **`history.db`**（应用层独占）：
 - 由 `workdiary_agent/storage/sqlite.py` 管理
-- 存储业务数据：日期、模板类型、原始输入、polished 内容
-- `workdiary_agent/nodes/save.py` 是唯一写入点
+- 存储业务数据：日期、模板类型、原始输入、polished 内容和导出路径
+- `save.py` 负责创建，`report_service.py` 协调历史编辑/删除和 Markdown 文件同步
 
 `workdiary_agent/storage/sqlite.py` 里明确注释：
 ```python

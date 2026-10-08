@@ -13,9 +13,14 @@ Node signature follows project convention: def xxx_node(state: AgentState) -> di
 from datetime import date as Date, datetime, time, timedelta
 import logging
 import re
+from typing import Any
 
-import git
 from langchain_core.messages import HumanMessage, SystemMessage
+
+try:
+    import git
+except Exception:  # GitPython can fail import when the system Git is unusable.
+    git = None
 
 from ..redaction import redact_secrets
 from ..state import AgentState
@@ -46,7 +51,7 @@ _DATA_EXTRACT_SYSTEM = """你是一个数据指标提取助手。请从用户粘
 logger = logging.getLogger(__name__)
 
 
-def _resolve_git_author(repo: git.Repo, requested_author: str | None) -> str | None:
+def _resolve_git_author(repo: Any, requested_author: str | None) -> str | None:
     """Resolve an explicit author or the repository's configured user identity."""
     if requested_author and requested_author.strip():
         return requested_author.strip()
@@ -57,7 +62,7 @@ def _resolve_git_author(repo: git.Repo, requested_author: str | None) -> str | N
                 value = reader.get_value("user", key, default=None)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-    except (OSError, ValueError, git.GitError):
+    except Exception:
         logger.warning("Unable to read git user identity for %s", repo.working_dir)
     return None
 
@@ -77,7 +82,9 @@ def _read_git_log(
       git.InvalidGitRepositoryError, git.NoSuchPathError, git.GitCommandError, Exception
     """
     safe_path = validate_repo_path(repo_path)
-    if not safe_path:
+    if not safe_path or git is None:
+        if safe_path and git is None:
+            logger.warning("Skipping git enrichment because Git is unavailable")
         return None
     try:
         repo = git.Repo(safe_path)
@@ -129,13 +136,18 @@ def _read_git_log(
             f"{c.hexsha[:7]} {c.message.strip().splitlines()[0][:200]}"
             for c in commits
         )
-    except git.InvalidGitRepositoryError:
-        return None
-    except git.NoSuchPathError:
-        return None
-    except git.GitCommandError:
-        return None
-    except Exception:
+    except Exception as exc:
+        expected_errors = tuple(
+            error_type
+            for error_type in (
+                getattr(git, "InvalidGitRepositoryError", None),
+                getattr(git, "NoSuchPathError", None),
+                getattr(git, "GitCommandError", None),
+            )
+            if isinstance(error_type, type)
+        )
+        if expected_errors and isinstance(exc, expected_errors):
+            return None
         logger.exception("Failed to read git history from %s", safe_path)
         return None
 

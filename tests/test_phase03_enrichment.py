@@ -1,5 +1,4 @@
 """Regression tests for Git and metric enrichment."""
-import git
 import pytest
 from unittest.mock import patch, MagicMock
 from workdiary_agent.state import AgentState, StructuredInfo
@@ -39,7 +38,9 @@ def test_enrich_valid_repo_produces_git_log():
     mock_repo = MagicMock()
     mock_repo.iter_commits.return_value = fake_commits
 
-    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+    mock_git = MagicMock()
+    mock_git.Repo.return_value = mock_repo
+    with patch("workdiary_agent.nodes.enrich.git", mock_git), \
          patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
         state: AgentState = {
             "repo_path": "/fake/repo",
@@ -74,7 +75,9 @@ def test_enrich_requires_exact_author_identity():
     mock_repo = MagicMock()
     mock_repo.iter_commits.return_value = fake_commits
 
-    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+    mock_git = MagicMock()
+    mock_git.Repo.return_value = mock_repo
+    with patch("workdiary_agent.nodes.enrich.git", mock_git), \
          patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
         result = enrich_node({
             "repo_path": "/fake/repo",
@@ -87,6 +90,10 @@ def test_enrich_requires_exact_author_identity():
 
 
 def test_real_git_log_uses_report_date_and_exact_author(tmp_path):
+    try:
+        import git
+    except ImportError:
+        pytest.skip("A working system Git is required for this integration check")
     repo = git.Repo.init(tmp_path)
     work_file = tmp_path / "work.txt"
     mine = git.Actor("Me", "me@example.com")
@@ -129,7 +136,9 @@ def test_enrich_without_author_skips_shared_repo_commits():
     reader.get_value.return_value = None
     mock_repo.config_reader.return_value.__enter__.return_value = reader
 
-    with patch("workdiary_agent.nodes.enrich.git.Repo", return_value=mock_repo), \
+    mock_git = MagicMock()
+    mock_git.Repo.return_value = mock_repo
+    with patch("workdiary_agent.nodes.enrich.git", mock_git), \
          patch("workdiary_agent.nodes.enrich.validate_repo_path", return_value="/fake/repo"):
         result = enrich_node({"repo_path": "/fake/repo"})
 

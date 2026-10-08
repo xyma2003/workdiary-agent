@@ -135,7 +135,7 @@ Open **http://localhost:8501** in your browser.
 4. Click **生成日报** — the agent runs through all nodes and pauses for your review
 5. Read the draft and its deterministic fact warnings, edit inline if needed, then **接受** or **修改**（number warnings require acknowledgement; potential credentials must be removed; final save always requires approval）
 6. The final report is saved to history and exported as a markdown file in `exports/`
-7. Past reports appear in the **历史记录** sidebar tab, with content search, template/date filters, and pagination
+7. Past reports appear in the **历史记录** sidebar tab, with content search, template/date filters, pagination, editing, and confirmed deletion
 8. If generation is interrupted or the browser closes during review, reopen it from **恢复未完成日报**
 
 ### Privacy and trust boundaries
@@ -191,6 +191,7 @@ exports/ + history.db
 | Checkpoint lifecycle | Completed UI runs remove their graph checkpoints after the approved report is persisted; unfinished runs remain recoverable |
 | Stable data directory | `WORKDIARY_DATA_DIR` can place both databases and exports on a durable volume independent of the launch directory |
 | Pre-save fact warnings | Checks compare the report and model-derived metric summary against original input/Git/data, require acknowledgement, and block likely credentials |
+| Synchronized CRUD | Saved-report edits update SQLite and the Markdown export together; deletion is confirmed and restricted to managed export paths |
 
 ---
 
@@ -211,6 +212,7 @@ workdiary-agent/
 │   ├── paths.py            # Stable runtime database/export paths
 │   ├── redaction.py        # Best-effort secret redaction before LLM calls
 │   ├── quality.py          # Deterministic pre-save factual-risk checks
+│   ├── report_service.py   # Coordinated history update/delete + export sync
 │   ├── utils.py            # make_llm() factory + validate_repo_path()
 │   ├── nodes/
 │   │   ├── extract.py      # Structured extraction via with_structured_output

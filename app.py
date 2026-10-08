@@ -1,5 +1,6 @@
 """Streamlit UI for generation, checkpoint recovery, review, and history."""
 import hashlib
+from datetime import date as Date
 import os
 import uuid
 import streamlit as st
@@ -12,6 +13,7 @@ from workdiary_agent.graph import build_graph
 from workdiary_agent.graph_constants import MAX_REVISIONS
 from workdiary_agent.quality import analyze_report_quality
 from workdiary_agent.recovery import list_recoverable_runs
+from workdiary_agent.report_service import delete_saved_report, update_saved_report
 from workdiary_agent.storage.export import delete_markdown
 from workdiary_agent.storage.sqlite import count_reports, get_all_reports, get_report
 from workdiary_agent.time_utils import work_date
@@ -492,9 +494,147 @@ def _render_review_ui():
         )
 
 
+def _render_history_record(record: dict) -> None:
+    """Render one history record with update, delete, and export actions."""
+    record_id = int(record["id"])
+    if st.session_state.get("history_edit_id") == record_id:
+        try:
+            initial_date = Date.fromisoformat(record["date"])
+        except (TypeError, ValueError):
+            initial_date = Date.today()
+        current_template = record.get("template_type")
+        if current_template not in ("技术型", "业务型", "混合型"):
+            current_template = "混合型"
+
+        with st.form(f"history_edit_form_{record_id}"):
+            edit_date = st.date_input("日报日期", value=initial_date)
+            edit_template = st.selectbox(
+                "模板类型",
+                ["技术型", "业务型", "混合型"],
+                index=["技术型", "业务型", "混合型"].index(current_template),
+            )
+            edit_raw_input = st.text_area(
+                "原始输入",
+                value=record.get("raw_input", "") or "",
+                height=120,
+            )
+            edit_polished = st.text_area(
+                "日报内容",
+                value=record.get("polished", "") or "",
+                height=260,
+            )
+            save_col, cancel_col = st.columns(2)
+            with save_col:
+                save_clicked = st.form_submit_button(
+                    "保存修改",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with cancel_col:
+                cancel_clicked = st.form_submit_button(
+                    "取消",
+                    use_container_width=True,
+                )
+
+        if cancel_clicked:
+            st.session_state.history_edit_id = None
+            st.rerun()
+        if save_clicked:
+            try:
+                update_saved_report(
+                    record_id,
+                    date=edit_date.isoformat(),
+                    template_type=edit_template,
+                    raw_input=edit_raw_input,
+                    polished=edit_polished,
+                )
+            except (ValueError, LookupError) as exc:
+                st.error(str(exc))
+            except Exception:
+                import logging
+                logging.exception("Failed to update report %s", record_id)
+                st.error("保存修改失败，请重试。")
+            else:
+                st.session_state.history_edit_id = None
+                st.session_state.history_notice = "日报已更新。"
+                st.rerun()
+        return
+
+    updated_at = record.get("updated_at")
+    timestamp_text = f"创建时间：{record.get('created_at', '')}"
+    if updated_at and updated_at != record.get("created_at"):
+        timestamp_text += f" · 更新时间：{updated_at}"
+    st.caption(timestamp_text)
+    st.markdown("**原始输入：**")
+    st.text(record.get("raw_input", ""))
+    st.markdown("**日报内容：**")
+    st.markdown(record.get("polished", ""))
+
+    export_col, edit_col, delete_col = st.columns(3)
+    export_col.download_button(
+        label="⬇ 导出",
+        data=record.get("polished", ""),
+        file_name=(
+            f"daily_report_{record['date']}_"
+            f"{(record.get('report_id') or str(record_id))[:8]}.md"
+        ),
+        mime="text/markdown",
+        key=f"hist_export_{record_id}",
+        use_container_width=True,
+    )
+    if edit_col.button(
+        "编辑",
+        key=f"hist_edit_{record_id}",
+        use_container_width=True,
+    ):
+        st.session_state.history_edit_id = record_id
+        st.session_state.history_delete_id = None
+        st.rerun()
+    if delete_col.button(
+        "删除",
+        key=f"hist_delete_{record_id}",
+        use_container_width=True,
+    ):
+        st.session_state.history_delete_id = record_id
+        st.session_state.history_edit_id = None
+        st.rerun()
+
+    if st.session_state.get("history_delete_id") == record_id:
+        st.warning("删除后将同时移除历史记录和受管理的 Markdown 导出，且无法撤销。")
+        confirm_col, cancel_col = st.columns(2)
+        if confirm_col.button(
+            "确认删除",
+            key=f"hist_confirm_delete_{record_id}",
+            type="primary",
+            use_container_width=True,
+        ):
+            try:
+                deleted = delete_saved_report(record_id)
+            except Exception:
+                import logging
+                logging.exception("Failed to delete report %s", record_id)
+                st.error("删除失败，请重试。")
+            else:
+                st.session_state.history_delete_id = None
+                st.session_state.history_notice = (
+                    "日报已删除。" if deleted else "该日报已经不存在。"
+                )
+                st.rerun()
+        if cancel_col.button(
+            "取消",
+            key=f"hist_cancel_delete_{record_id}",
+            use_container_width=True,
+        ):
+            st.session_state.history_delete_id = None
+            st.rerun()
+
+
 def _render_history_page():
     """History view with search, filters, pagination, and export."""
     st.title("历史记录")
+    notice = st.session_state.pop("history_notice", None)
+    if notice:
+        st.success(notice)
 
     col_query, col_template = st.columns([3, 1])
     with col_query:
@@ -527,6 +667,8 @@ def _render_history_page():
     if st.session_state.get("_history_filter_signature") != filter_signature:
         st.session_state._history_filter_signature = filter_signature
         st.session_state.history_page = 0
+        st.session_state.history_edit_id = None
+        st.session_state.history_delete_id = None
 
     col_refresh, _ = st.columns([1, 5])
     with col_refresh:
@@ -568,23 +710,12 @@ def _render_history_page():
     for r in reports:
         # D-21: st.expander labeled with date and template_type
         label = f"{r['date']} — {r.get('template_type') or '未知模板'}"
-        with st.expander(label, expanded=False):
-            st.caption(f"创建时间: {r.get('created_at', '')}")
-            st.markdown("**原始输入:**")
-            st.text(r.get("raw_input", ""))
-            st.markdown("**日报内容:**")
-            st.markdown(r.get("polished", ""))
-            # Inline export from history
-            st.download_button(
-                label="⬇ 导出此记录",
-                data=r.get("polished", ""),
-                file_name=(
-                    f"daily_report_{r['date']}_"
-                    f"{(r.get('report_id') or str(r['id']))[:8]}.md"
-                ),
-                mime="text/markdown",
-                key=f"hist_export_{r['id']}",
-            )
+        is_active = r["id"] in {
+            st.session_state.get("history_edit_id"),
+            st.session_state.get("history_delete_id"),
+        }
+        with st.expander(label, expanded=is_active):
+            _render_history_record(r)
 
     if total > page_size:
         previous, page_label, following = st.columns([1, 2, 1])
@@ -633,6 +764,10 @@ if "_resume_existing" not in st.session_state:
     st.session_state._resume_existing = False
 if "history_page" not in st.session_state:
     st.session_state.history_page = 0
+if "history_edit_id" not in st.session_state:
+    st.session_state.history_edit_id = None
+if "history_delete_id" not in st.session_state:
+    st.session_state.history_delete_id = None
 
 # ---------------------------------------------------------------------------
 # Sidebar navigation (D-01, D-02)

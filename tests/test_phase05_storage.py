@@ -55,11 +55,14 @@ def test_save_report_is_idempotent_by_report_id(tmp_path, monkeypatch):
         "polished": "first",
     }
     sqlite_mod.save_report(base)
+    original = sqlite_mod.get_all_reports()[0]
     sqlite_mod.save_report({**base, "polished": "updated"})
 
     reports = sqlite_mod.get_all_reports()
     assert len(reports) == 1
     assert reports[0]["polished"] == "updated"
+    assert reports[0]["created_at"] == original["created_at"]
+    assert reports[0]["updated_at"]
 
 
 def test_legacy_history_schema_is_migrated_in_place(tmp_path, monkeypatch):
@@ -86,6 +89,7 @@ def test_legacy_history_schema_is_migrated_in_place(tmp_path, monkeypatch):
     assert reports[0]["polished"] == "legacy report"
     assert reports[0]["report_id"] is None
     assert reports[0]["export_path"] is None
+    assert reports[0]["updated_at"] is None
 
 
 def test_save_report_created_at_set(tmp_path, monkeypatch):
