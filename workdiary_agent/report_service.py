@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from datetime import date as Date
+from dataclasses import dataclass
 import logging
 import os
 import uuid
 
 from .redaction import redact_secrets
-from .storage.export import delete_export_path, save_markdown
+from .storage.export import delete_export_path, is_managed_export_path, save_markdown
 from .storage.sqlite import (
-    delete_report_by_id,
+    delete_report_with_cleanup,
+    export_cleanup_transaction,
     get_report_by_id,
     update_report_by_id,
 )
@@ -110,15 +112,61 @@ def update_saved_report(
     return result
 
 
-def delete_saved_report(record_id: int) -> dict | None:
-    """Delete a report row, then remove its managed export when present."""
-    record = get_report_by_id(record_id)
-    if record is None:
-        return None
-    if not delete_report_by_id(record_id):
-        return None
+@dataclass(frozen=True)
+class DeleteReportResult:
+    record: dict
+    cleanup_status: str
+    cleanup_id: int | None
+
+
+def retry_export_cleanup(cleanup_id: int) -> str:
+    """Retry a persisted task, rechecking ownership before touching the file.
+
+    The write lock prevents database reference changes between the active-report
+    check and removal. A crash leaves the task safe to retry,
+    even if the file has already been removed.
+    """
     try:
-        delete_export_path(record.get("export_path"))
-    except OSError:
-        logger.exception("Failed to remove export for deleted report %s", record_id)
-    return record
+        with export_cleanup_transaction(cleanup_id) as (conn, task):
+            if task is None:
+                return "not_found"
+            path = task["export_path"]
+            if not is_managed_export_path(path):
+                status = "unmanaged"
+            elif any(
+                os.path.realpath(row["export_path"]) == os.path.realpath(path)
+                for row in conn.execute(
+                    "SELECT export_path FROM reports WHERE export_path IS NOT NULL "
+                    "AND export_path != ''"
+                )
+            ):
+                status = "in_use"
+            else:
+                try:
+                    delete_export_path(path)
+                except OSError as exc:
+                    conn.execute(
+                        "UPDATE export_cleanup SET last_error = ? WHERE id = ?",
+                        (redact_secrets(str(exc)), cleanup_id),
+                    )
+                    return "pending"
+                status = "complete"
+            conn.execute("DELETE FROM export_cleanup WHERE id = ?", (cleanup_id,))
+            return status
+    except Exception:
+        # The report deletion has already committed. Never misreport this as a
+        # failed row deletion: the durable task survives a failed cleanup commit.
+        logger.exception("Export cleanup task %s remains pending", cleanup_id)
+        return "pending"
+
+
+def delete_saved_report(record_id: int) -> DeleteReportResult | None:
+    """Atomically delete the row and queue its export, then attempt cleanup."""
+    deleted = delete_report_with_cleanup(record_id)
+    if deleted is None:
+        return None
+    record, cleanup_id = deleted
+    status = retry_export_cleanup(cleanup_id) if cleanup_id is not None else "complete"
+    if status == "not_found":  # Another session already completed the task.
+        status = "complete"
+    return DeleteReportResult(record, status, cleanup_id)

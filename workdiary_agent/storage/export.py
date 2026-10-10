@@ -6,6 +6,7 @@ EXPORTS_DIR is a module-level constant so tests can monkeypatch it:
 """
 import os
 import re
+import stat
 import uuid
 
 from ..paths import data_path
@@ -70,18 +71,44 @@ def delete_markdown(date: str, report_id: str) -> bool:
     return True
 
 
-def delete_export_path(filepath: str | None) -> bool:
-    """Delete a stored export path only when it remains inside EXPORTS_DIR."""
+def is_managed_export_path(filepath: str | None) -> bool:
+    """Accept paths below the export directory without following symlinks."""
     if not filepath:
         return False
-    export_root = os.path.realpath(EXPORTS_DIR)
-    target = os.path.realpath(filepath)
+    # The filesystem resolves a symlink before walking through '..', unlike
+    # abspath(). Never normalize away that evidence before validation.
+    if ".." in filepath.split(os.sep):
+        return False
+    export_root = os.path.abspath(EXPORTS_DIR)
+    target = os.path.abspath(filepath)
+    if os.path.islink(export_root):
+        return False
     try:
-        if os.path.commonpath([export_root, target]) != export_root:
+        if target == export_root or os.path.commonpath([export_root, target]) != export_root:
+            return False
+        real_root = os.path.realpath(export_root)
+        if os.path.commonpath([real_root, os.path.realpath(target)]) != real_root:
             return False
     except ValueError:
         return False
-    if not os.path.isfile(target):
+    relative = os.path.relpath(target, export_root)
+    current = export_root
+    for component in relative.split(os.sep):
+        current = os.path.join(current, component)
+        if os.path.islink(current):
+            return False
+    return True
+
+
+def delete_export_path(filepath: str | None) -> bool:
+    """Remove a managed export; missing files are harmless, I/O errors propagate."""
+    if not is_managed_export_path(filepath):
         return False
-    os.remove(target)
+    try:
+        info = os.stat(filepath, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError("导出路径不是普通文件，请检查后重试")
+    os.remove(filepath)
     return True

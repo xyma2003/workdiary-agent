@@ -32,10 +32,22 @@ CREATE TABLE IF NOT EXISTS reports (
 )
 """
 
+_CREATE_EXPORT_CLEANUP_SQL = """
+CREATE TABLE IF NOT EXISTS export_cleanup (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_id INTEGER,
+    report_date TEXT,
+    export_path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_error TEXT NOT NULL DEFAULT ''
+)
+"""
+
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the current schema and migrate databases from older releases."""
     conn.execute(_CREATE_TABLE_SQL)
+    conn.execute(_CREATE_EXPORT_CLEANUP_SQL)
     existing = {
         row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()
     }
@@ -260,3 +272,74 @@ def delete_report_by_id(record_id: int) -> bool:
         cursor = conn.execute("DELETE FROM reports WHERE id = ?", (record_id,))
         conn.commit()
         return cursor.rowcount == 1
+
+
+def delete_report_with_cleanup(record_id: int) -> tuple[dict, int | None] | None:
+    """Delete a report and persist its export cleanup task atomically.
+
+    The export path comes only from the saved row, so callers cannot enqueue
+    arbitrary paths through this API. Filesystem cleanup happens separately:
+    a failed unlink must not lose the information needed for a later retry.
+    """
+    with _db(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM reports WHERE id = ?", (record_id,)
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+
+            report = dict(row)
+            cleanup_id = None
+            if report.get("export_path"):
+                cursor = conn.execute(
+                    "INSERT INTO export_cleanup "
+                    "(record_id, report_date, export_path, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        record_id,
+                        report["date"],
+                        report["export_path"],
+                        datetime.now().astimezone().isoformat(),
+                    ),
+                )
+                cleanup_id = cursor.lastrowid
+
+            conn.execute("DELETE FROM reports WHERE id = ?", (record_id,))
+            conn.commit()
+            return report, cleanup_id
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def list_export_cleanups() -> list[dict]:
+    """Return persisted export cleanup tasks, oldest first."""
+    with _db(DB_PATH) as conn:
+        rows = conn.execute("SELECT * FROM export_cleanup ORDER BY id").fetchall()
+        return [dict(row) for row in rows]
+
+
+@contextmanager
+def export_cleanup_transaction(
+    cleanup_id: int,
+) -> Generator[tuple[sqlite3.Connection, dict | None], None, None]:
+    """Lock a cleanup task while checking references and removing its file.
+
+    The caller updates or removes the task using the yielded connection. The
+    immediate transaction also prevents another database writer from assigning
+    the export path to an active report during the cleanup decision.
+    """
+    with _db(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT * FROM export_cleanup WHERE id = ?", (cleanup_id,)
+            ).fetchone()
+            yield conn, dict(row) if row is not None else None
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise

@@ -138,6 +138,14 @@ Open **http://localhost:8501** in your browser.
 7. Past reports appear in the **历史记录** sidebar tab, with content search, template/date filters, pagination, editing, and confirmed deletion
 8. If generation is interrupted or the browser closes during review, reopen it from **恢复未完成日报**
 
+Deleting a saved report removes its history row first and attempts to clean up its
+managed Markdown export. If cleanup fails, the page shows a partial-success
+warning and a **待清理导出 → 重试清理** action. Pending tasks are stored in
+`history.db`, so they remain available after a refresh or restart, even when no
+reports remain. Missing files count as already cleaned up. Files outside the export
+directory, paths containing symlinks, and exports still used by another report are
+preserved with an explicit notice.
+
 ### Privacy and trust boundaries
 
 - Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Common credential formats are redacted before model calls, but this is best-effort; do not submit data your provider is not allowed to process. The original input remains stored locally in history after approval.

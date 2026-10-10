@@ -13,9 +13,18 @@ from workdiary_agent.graph import build_graph
 from workdiary_agent.graph_constants import MAX_REVISIONS
 from workdiary_agent.quality import analyze_report_quality
 from workdiary_agent.recovery import list_recoverable_runs
-from workdiary_agent.report_service import delete_saved_report, update_saved_report
+from workdiary_agent.report_service import (
+    delete_saved_report,
+    retry_export_cleanup,
+    update_saved_report,
+)
 from workdiary_agent.storage.export import delete_markdown
-from workdiary_agent.storage.sqlite import count_reports, get_all_reports, get_report
+from workdiary_agent.storage.sqlite import (
+    count_reports,
+    get_all_reports,
+    get_report,
+    list_export_cleanups,
+)
 from workdiary_agent.time_utils import work_date
 from workdiary_agent.utils import LLMConfigurationError, validate_llm_configuration
 
@@ -600,7 +609,7 @@ def _render_history_record(record: dict) -> None:
         st.rerun()
 
     if st.session_state.get("history_delete_id") == record_id:
-        st.warning("删除后将同时移除历史记录和受管理的 Markdown 导出，且无法撤销。")
+        st.warning("删除后无法恢复历史记录。系统会清理受管理的 Markdown 导出；清理失败时会保留重试入口。")
         confirm_col, cancel_col = st.columns(2)
         if confirm_col.button(
             "确认删除",
@@ -616,9 +625,11 @@ def _render_history_record(record: dict) -> None:
                 st.error("删除失败，请重试。")
             else:
                 st.session_state.history_delete_id = None
-                st.session_state.history_notice = (
-                    "日报已删除。" if deleted else "该日报已经不存在。"
-                )
+                if deleted:
+                    _set_cleanup_notice(deleted.cleanup_status, deleted=True)
+                else:
+                    st.session_state.history_notice = "该日报已经不存在。"
+                    st.session_state.history_notice_level = "info"
                 st.rerun()
         if cancel_col.button(
             "取消",
@@ -629,12 +640,59 @@ def _render_history_record(record: dict) -> None:
             st.rerun()
 
 
+def _set_cleanup_notice(status: str, *, deleted: bool = False) -> None:
+    prefix = "日报记录已删除。" if deleted else ""
+    messages = {
+        "complete": ("success", "导出清理已完成。"),
+        "pending": ("warning", "导出清理尚未完成，可在下方“待清理导出”中重试。"),
+        "unmanaged": ("warning", "导出路径不属于受管理目录或包含符号链接，文件已保留。"),
+        "in_use": ("warning", "导出仍被其他日报使用，文件已保留。"),
+        "not_found": ("info", "该清理任务已处理，请以当前列表为准。"),
+    }
+    level, message = messages[status]
+    st.session_state.history_notice = prefix + message
+    st.session_state.history_notice_level = level
+
+
+def _render_export_cleanups() -> None:
+    """Keep failed deletion cleanup visible even when history is empty."""
+    try:
+        tasks = list_export_cleanups()
+    except Exception:
+        import logging
+        logging.exception("Failed to load export cleanup tasks")
+        st.error("无法加载待清理导出，请刷新重试。")
+        return
+    if not tasks:
+        return
+    st.subheader(f"待清理导出（{len(tasks)}）")
+    st.caption("日报记录已删除，以下导出尚未确认清理完成。检查文件占用或目录权限后，可以继续重试。")
+    for task in tasks:
+        with st.container(border=True):
+            detail_col, action_col = st.columns([4, 1])
+            with detail_col:
+                st.text(f"{task['report_date']} · {os.path.basename(task['export_path'])}")
+                with st.expander("查看清理详情"):
+                    st.text(task["export_path"])
+                    st.text(task["last_error"] or "上次清理未完成或未能确认结果，可以安全重试。")
+            if action_col.button(
+                "重试清理",
+                key=f"hist_retry_cleanup_{task['id']}",
+                use_container_width=True,
+            ):
+                _set_cleanup_notice(retry_export_cleanup(task["id"]))
+                st.rerun()
+
+
 def _render_history_page():
     """History view with search, filters, pagination, and export."""
     st.title("历史记录")
     notice = st.session_state.pop("history_notice", None)
+    notice_level = st.session_state.pop("history_notice_level", "success")
     if notice:
-        st.success(notice)
+        getattr(st, notice_level)(notice)
+
+    _render_export_cleanups()
 
     col_query, col_template = st.columns([3, 1])
     with col_query:

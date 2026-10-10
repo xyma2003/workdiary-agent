@@ -101,9 +101,11 @@ def test_delete_saved_report_removes_database_row_and_managed_export(
 
     deleted = delete_saved_report(record["id"])
 
-    assert deleted["report_id"] == "report-1"
+    assert deleted.record["report_id"] == "report-1"
+    assert deleted.cleanup_status == "complete"
     assert sqlite_mod.get_report_by_id(record["id"]) is None
     assert not os.path.exists(record["export_path"])
+    assert sqlite_mod.list_export_cleanups() == []
     assert delete_saved_report(record["id"]) is None
 
 
@@ -122,7 +124,9 @@ def test_delete_saved_report_never_removes_file_outside_export_dir(
     })
     record = sqlite_mod.get_report("external-path")
 
-    delete_saved_report(record["id"])
+    deleted = delete_saved_report(record["id"])
 
+    assert deleted.cleanup_status == "unmanaged"
     assert outside.exists()
     assert sqlite_mod.get_report("external-path") is None
+    assert sqlite_mod.list_export_cleanups() == []
