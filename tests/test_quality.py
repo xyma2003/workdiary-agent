@@ -1,6 +1,12 @@
 """Deterministic report quality checks."""
 
-from workdiary_agent.quality import analyze_report_quality, extract_numbers
+import pytest
+
+from workdiary_agent.quality import (
+    analyze_report_quality,
+    extract_numbers,
+    review_source_snapshot,
+)
 
 
 def test_number_extraction_ignores_ordered_list_markers():
@@ -75,3 +81,70 @@ def test_quality_recognizes_report_date_as_source_data():
 
     assert result["unverified_numbers"] == []
     assert any("未提供量化指标" in warning for warning in result["warnings"])
+
+
+def _snapshot(**overrides):
+    return {
+        "schema_version": 1,
+        "captured_at": "2026-10-14T02:00:00+00:00",
+        "capture_status": "complete",
+        "raw_input": "完成 3 项测试",
+        "data_input": "响应时间降至 45ms",
+        "git": {"status": "captured", "log": "abcdef1 fix: resolve 2 retries"},
+        **overrides,
+    }
+
+
+def test_quality_uses_frozen_material_when_checkpoint_state_diverges():
+    result = analyze_report_quality({
+        "source_snapshot": _snapshot(),
+        "raw_input": "人工更新后记录 7 项测试",
+        "data_input": "更新后响应时间 20ms",
+        "git_log": "fedcba1 fix: resolve 9 retries",
+        "data_summary": "完成 3 项测试，响应时间 20ms",
+        "edited_text": "完成 3 项测试，响应时间 45ms，修复 2 次重试，新增 7、20、9。",
+    })
+
+    assert result["source_numbers"] == ["2", "3", "45"]
+    assert result["unverified_numbers"] == ["20", "7", "9"]
+    assert result["unverified_summary_numbers"] == ["20"]
+
+
+def test_empty_frozen_sources_never_borrow_later_state_material():
+    result = analyze_report_quality({
+        "source_snapshot": _snapshot(
+            capture_status="partial",
+            raw_input="",
+            data_input="",
+            git={"status": "unavailable", "log": None},
+        ),
+        "raw_input": "完成 3 项测试",
+        "data_input": "响应时间 45ms",
+        "git_log": "abcdef1 fix: resolve 2 retries",
+        "polished": "完成 3 项测试，响应时间 45ms，修复 2 次重试。",
+    })
+
+    assert result["source_numbers"] == []
+    assert result["unverified_numbers"] == ["2", "3", "45"]
+    assert any("未提供量化指标" in warning for warning in result["warnings"])
+
+
+@pytest.mark.parametrize("snapshot", [
+    None,
+    "corrupt",
+    _snapshot(schema_version=99),
+    _snapshot(schema_version=True),
+    _snapshot(capture_status=["complete"]),
+    _snapshot(raw_input=None),
+    _snapshot(git={"status": ["captured"], "log": "malformed"}),
+    _snapshot(git={"status": "captured", "log": ["malformed"]}),
+])
+def test_unusable_snapshot_uses_explicit_legacy_state_fallback(snapshot):
+    state = {
+        "source_snapshot": snapshot,
+        "raw_input": "响应时间 45ms",
+        "polished": "响应时间 45ms",
+    }
+
+    assert review_source_snapshot(state) is None
+    assert analyze_report_quality(state)["warnings"] == []

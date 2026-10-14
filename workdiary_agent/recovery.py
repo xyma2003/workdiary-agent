@@ -18,21 +18,32 @@ def list_recoverable_runs(
     """
     recoverable: list[dict] = []
     seen_thread_ids: set[str] = set()
+    candidates: list[tuple[str, str]] = []
 
-    for checkpoint_tuple in graph.checkpointer.list(None, limit=scan_limit):
-        configurable = checkpoint_tuple.config.get("configurable", {})
-        thread_id = configurable.get("thread_id")
-        if not thread_id or thread_id in seen_thread_ids:
-            continue
-        seen_thread_ids.add(thread_id)
+    # SqliteSaver.list holds its non-reentrant lock while yielding. Finish and
+    # close that iterator before get_state needs the same checkpointer lock.
+    checkpoints = graph.checkpointer.list(None, limit=scan_limit)
+    try:
+        for checkpoint_tuple in checkpoints:
+            configurable = checkpoint_tuple.config.get("configurable", {})
+            thread_id = configurable.get("thread_id")
+            if not thread_id or thread_id in seen_thread_ids:
+                continue
+            seen_thread_ids.add(thread_id)
+            checkpoint = checkpoint_tuple.checkpoint or {}
+            candidates.append((thread_id, checkpoint.get("ts", "")))
+    finally:
+        close = getattr(checkpoints, "close", None)
+        if close is not None:
+            close()
 
+    for thread_id, updated_at in candidates:
         config = {"configurable": {"thread_id": thread_id}}
         snapshot = graph.get_state(config)
         values = dict(snapshot.values or {})
         if not snapshot.next or not values.get("raw_input"):
             continue
 
-        checkpoint = checkpoint_tuple.checkpoint or {}
         recoverable.append({
             "thread_id": thread_id,
             "report_id": values.get("report_id"),
@@ -40,7 +51,7 @@ def list_recoverable_runs(
             "template_type": values.get("template_type"),
             "revision_count": values.get("revision_count", 0),
             "date": values.get("date"),
-            "updated_at": checkpoint.get("ts", ""),
+            "updated_at": updated_at,
             "next_nodes": tuple(snapshot.next),
             "status": "reviewing" if "review" in snapshot.next else "retryable",
         })

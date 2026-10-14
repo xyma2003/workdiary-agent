@@ -154,11 +154,27 @@ preserved with an explicit notice.
 - User text and repository-derived text are delimited as untrusted source data in prompts. This reduces prompt-injection risk but is not a complete security boundary.
 - Repository paths are read from the machine running Streamlit. Keep the app local or add deployment-level access controls before exposing it to other users.
 
+### Review against the original material
+
+Before accepting a report, **原始材料** and **待审日报** appear side by side.
+The source panel shows the frozen work description, pasted metric text and Git
+commit subjects; long sources scroll independently. You can edit the report,
+request a revision or download the current text while checking those sources.
+The new-report form is collapsed during review so the active report stays in view.
+
+**模型提炼的指标摘要（非原始证据）** is a separate, labeled section. Fact warnings
+use the same frozen original sources shown in the panel, not the model's summary
+or changes to the new-report form. These checks flag possible issues; they do not
+prove factual correctness. A new report edit resets any warning acknowledgement.
+When resuming an older task without a source snapshot, the app labels its remaining
+checkpoint material as incomplete instead of reading today's repository.
+
 ### Inspect a saved report's sources
 
-In **历史记录**, expand **生成时的来源快照** to inspect the work description and
-raw pasted metrics used for generation, the selected Git commit subjects, and
-the resolved author/date/timezone filters. The snapshot is checkpointed before
+In **历史记录**, expand **生成时的来源快照** to compare the original material with
+the currently saved report. You can inspect the work description and raw pasted
+metrics used for generation, the selected Git commit subjects, and the resolved
+author/date/timezone filters. The snapshot is checkpointed before
 the first model stage: later Git changes or a retry after a model failure do not
 silently replace those sources. A missing/unavailable Git result is recorded as
 such; the snapshot is not a backup of repository files or the entire commit history.

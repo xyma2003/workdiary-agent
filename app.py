@@ -11,7 +11,7 @@ load_dotenv(override=False)  # load runtime paths/config before project modules
 
 from workdiary_agent.graph import build_graph
 from workdiary_agent.graph_constants import MAX_REVISIONS
-from workdiary_agent.quality import analyze_report_quality
+from workdiary_agent.quality import analyze_report_quality, review_source_snapshot
 from workdiary_agent.recovery import list_recoverable_runs
 from workdiary_agent.report_service import (
     delete_saved_report,
@@ -137,42 +137,47 @@ def _render_generate_page():
     st.title("智能日报 Agent")
     st.markdown("将今天的工作描述转化为老板爱看的专业日报。")
 
-    with st.form("input_form"):
-        raw_input = st.text_area(
-            "工作描述 *",
-            placeholder="今天完成了登录模块开发，解决了token过期的bug...",
-            height=150,
-            key="raw_input_field",
-        )
-        template_choice = st.selectbox(
-            "日报模板",
-            ["自动判断", "技术型", "业务型", "混合型"],
-            key="template_choice_field",
-        )
-        repo_path = st.text_input(
-            "Git 仓库路径（可选）",
-            placeholder="/path/to/your/repo",
-            key="repo_path_field",
-        )
-        with st.expander("Git 提交归属设置"):
-            git_author = st.text_input(
-                "Git 作者或邮箱（推荐）",
-                placeholder="name@example.com；留空时读取仓库 git user.email",
-                key="git_author_field",
+    input_container = (
+        st.expander("重新填写并生成新日报", expanded=False)
+        if st.session_state.app_state == "reviewing" else st.container()
+    )
+    with input_container:
+        with st.form("input_form"):
+            raw_input = st.text_area(
+                "工作描述 *",
+                placeholder="今天完成了登录模块开发，解决了token过期的bug...",
+                height=150,
+                key="raw_input_field",
             )
-            timezone = st.text_input(
-                "工作日时区",
-                value=os.environ.get("WORKDIARY_TIMEZONE", ""),
-                placeholder="例如 Asia/Shanghai；留空使用系统时区",
-                key="timezone_field",
+            template_choice = st.selectbox(
+                "日报模板",
+                ["自动判断", "技术型", "业务型", "混合型"],
+                key="template_choice_field",
             )
-        data_input = st.text_area(
-            "数据/指标（可选粘贴）",
-            placeholder="DAU: 12000, 转化率: 3.2%, ...",
-            height=80,
-            key="data_input_field",
-        )
-        submitted = st.form_submit_button("生成日报", type="primary", use_container_width=True)
+            repo_path = st.text_input(
+                "Git 仓库路径（可选）",
+                placeholder="/path/to/your/repo",
+                key="repo_path_field",
+            )
+            with st.expander("Git 提交归属设置"):
+                git_author = st.text_input(
+                    "Git 作者或邮箱（推荐）",
+                    placeholder="name@example.com；留空时读取仓库 git user.email",
+                    key="git_author_field",
+                )
+                timezone = st.text_input(
+                    "工作日时区",
+                    value=os.environ.get("WORKDIARY_TIMEZONE", ""),
+                    placeholder="例如 Asia/Shanghai；留空使用系统时区",
+                    key="timezone_field",
+                )
+            data_input = st.text_area(
+                "数据/指标（可选粘贴）",
+                placeholder="DAU: 12000, 转化率: 3.2%, ...",
+                height=80,
+                key="data_input_field",
+            )
+            submitted = st.form_submit_button("生成日报", type="primary", use_container_width=True)
 
     if submitted:
         if not raw_input.strip():
@@ -201,7 +206,6 @@ def _render_generate_page():
         st.rerun()
 
     # Generation / reviewing / done states rendered below form
-    # (Plan 06-02 will fill in _render_status_and_review())
     if st.session_state.app_state != "idle":
         _render_status_and_review()
     else:
@@ -341,167 +345,220 @@ def _render_failure_ui():
 
 
 def _render_review_ui():
-    """Review view: editable text_area + accept/revise/export buttons (D-14 through D-19)."""
+    """Compare frozen sources with an editable report before explicit approval."""
     result = st.session_state.result or {}
     polished = result.get("polished", "")
     template_type = result.get("template_type", "未知模板")
     revision_count = result.get("revision_count", 0)
 
-    # D-13 equivalent: show selected template (TMPL-02 visibility)
-    st.caption(f"已选用 {template_type} 模板")
-
-    # D-14: editable text_area pre-filled with polished content (HITL-02 inline editing)
-    edit_key = f"edit_area_{st.session_state.thread_id}_{revision_count}"
-    edited_text = st.text_area(
-        "日报内容（可直接编辑）",
-        value=polished,
-        height=300,
-        key=edit_key,
-    )
-
-    quality = analyze_report_quality({**result, "edited_text": edited_text})
-    quality_acknowledged = True
-    contains_secret = (
-        quality["contains_secret_marker"]
-        or quality["contains_potential_secret"]
-    )
-    if quality["warnings"]:
-        with st.expander("保存前事实检查", expanded=True):
-            for warning in quality["warnings"]:
-                st.warning(warning)
-        if contains_secret:
-            st.error("检测到潜在凭证或脱敏标记，请移除后再保存。")
-            quality_acknowledged = False
+    st.subheader("核对并确认日报")
+    st.caption("对照原始材料核对数字、工作归属和结论，再编辑或确认保存。")
+    sources_col, report_col = st.columns([1, 1.2], gap="large")
+    with sources_col:
+        st.markdown("### 原始材料")
+        source = review_source_snapshot(result)
+        if source is None:
+            st.warning("旧任务未保存来源快照。以下是检查点里仍保留的材料，完整性无法确认。")
+            source = {
+                "raw_input": result.get("raw_input") or "",
+                "data_input": result.get("data_input") or "",
+                "git": {"status": "legacy_unknown", "log": result.get("git_log")},
+            }
         else:
-            warning_fingerprint = hashlib.sha256(
-                edited_text.encode("utf-8")
-            ).hexdigest()[:12]
-            quality_acknowledged = st.checkbox(
-                "我已根据原始材料核对以上提示",
-                key=f"quality_ack_{edit_key}_{warning_fingerprint}",
-            )
-
-    # Three-button row (D-15)
-    col1, col2, col3 = st.columns(3)
-
-    config = {"configurable": {"thread_id": st.session_state.thread_id}}
-
-    # D-15 + D-16 + D-18: Accept button — passes edited text back to graph so save_node persists it
-    with col1:
-        if st.button(
-            "✓ 接受",
-            type="primary",
-            use_container_width=True,
-            key="accept_btn",
-            disabled=not quality_acknowledged,
-        ):
-            # D-18: read current value from session_state (includes user's inline edits)
-            current_text = st.session_state.get(edit_key, polished)
-            if not current_text.strip():
-                st.warning("日报内容不能为空")
-                return
-            try:
-                r = get_graph().invoke(
-                    Command(resume={
-                        "decision": "approve",
-                        "feedback": "",
-                        "edited_text": current_text,
-                    }),
-                    config,
-                )
-                # save_node already persisted current_text via edited_text in state
-                st.session_state.result = dict(r)
-                st.session_state.result["polished"] = current_text
-                st.session_state.app_state = "done"
-                _forget_completed_checkpoint(st.session_state.thread_id)
-                st.rerun()
-            except Exception:
-                import logging
-                logging.exception("Accept failed")
-                st.session_state._resume_existing = True
-                st.session_state.app_state = "failed"
-                return
-
-    # D-15 + D-17: Revise button — shows feedback input, then resumes with revise decision
-    with col2:
-        if st.button(
-            "↻ 重新生成",
-            use_container_width=True,
-            key="revise_btn",
-            disabled=revision_count >= MAX_REVISIONS,
-        ):
-            st.session_state._show_feedback = True
-
-    if revision_count >= MAX_REVISIONS:
-        st.info("已达到修改上限，请直接编辑后接受；系统不会自动保存未经确认的版本。")
-
-    if result.get("git_log") or result.get("data_summary"):
-        with st.expander("本次生成依据", expanded=False):
-            if result.get("git_log"):
-                st.markdown("**Git commits**")
-                st.code(result["git_log"], language="text")
-            if result.get("data_summary"):
-                st.markdown("**数据指标**")
+            st.caption("固定于本次生成开始时；重新填写上方表单不会改变这些材料。")
+            if source.get("capture_status") == "partial":
+                st.warning("此快照只包含部分来源，未记录的内容不能视为已核验。")
+        with st.container(height=450, border=True):
+            _render_snapshot_materials(source)
+        if result.get("data_summary"):
+            with st.expander("模型提炼的指标摘要（非原始证据）", expanded=False):
+                st.caption("此摘要由模型整理，可能遗漏或误读指标；请以上方粘贴的指标原文为准。")
                 st.text(result["data_summary"])
+    with report_col:
+        st.markdown("### 待审日报")
+        # D-13 equivalent: show selected template (TMPL-02 visibility)
+        st.caption(f"已选用 {template_type} 模板")
 
-    if st.session_state.get("_show_feedback"):
-        feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")
-        if st.button("确认修改", key="confirm_revise_btn"):
-            if not feedback.strip():
-                st.warning("请填写修改意见")
+        # D-14: editable text_area pre-filled with polished content (HITL-02 inline editing)
+        edit_key = f"edit_area_{st.session_state.thread_id}_{revision_count}"
+        edited_text = st.text_area(
+            "日报内容（可直接编辑）",
+            value=polished,
+            height=450,
+            key=edit_key,
+        )
+
+        quality = analyze_report_quality({**result, "edited_text": edited_text})
+        quality_acknowledged = True
+        contains_secret = (
+            quality["contains_secret_marker"]
+            or quality["contains_potential_secret"]
+        )
+        if quality["warnings"]:
+            with st.expander("保存前事实检查", expanded=True):
+                for warning in quality["warnings"]:
+                    st.warning(warning)
+            if contains_secret:
+                st.error("检测到潜在凭证或脱敏标记，请移除后再保存。")
+                quality_acknowledged = False
             else:
+                warning_fingerprint = hashlib.sha256(
+                    edited_text.encode("utf-8")
+                ).hexdigest()[:12]
+                quality_acknowledged = st.checkbox(
+                    "我已根据原始材料核对以上提示",
+                    key=f"quality_ack_{edit_key}_{warning_fingerprint}",
+                )
+
+        # Three-button row (D-15)
+        col1, col2, col3 = st.columns(3)
+
+        config = {"configurable": {"thread_id": st.session_state.thread_id}}
+
+        # D-15 + D-16 + D-18: Accept button — passes edited text back to graph so save_node persists it
+        with col1:
+            if st.button(
+                "✓ 接受",
+                type="primary",
+                use_container_width=True,
+                key="accept_btn",
+                disabled=not quality_acknowledged,
+            ):
+                # D-18: read current value from session_state (includes user's inline edits)
+                current_text = st.session_state.get(edit_key, polished)
+                if not current_text.strip():
+                    st.warning("日报内容不能为空")
+                    return
                 try:
-                    current_text = st.session_state.get(edit_key, polished)
-                    if not current_text.strip():
-                        st.warning("日报内容不能为空")
-                        return
-                    result2, interrupt_payload, is_reviewing = _stream_graph(
+                    r = get_graph().invoke(
                         Command(resume={
-                            "decision": "revise",
-                            "feedback": feedback.strip(),
+                            "decision": "approve",
+                            "feedback": "",
                             "edited_text": current_text,
                         }),
                         config,
                     )
-                    if is_reviewing:
-                        new_polished = interrupt_payload.get("polished") or result2.get("polished", polished)
-                        new_template = result2.get("template_type", template_type)
-                        st.session_state.result = {
-                            **result2,
-                            "polished": new_polished,
-                            "template_type": new_template,
-                            "revision_count": interrupt_payload.get(
-                                "revision_count", result2.get("revision_count", revision_count + 1)
-                            ),
-                            "report_id": result2.get("report_id", result.get("report_id")),
-                            "interrupt_payload": interrupt_payload,
-                        }
-                        st.session_state._show_feedback = False
-                        st.session_state.app_state = "reviewing"
-                    else:
-                        st.session_state.result = dict(result2)
-                        st.session_state.app_state = "done"
+                    # save_node already persisted current_text via edited_text in state
+                    st.session_state.result = dict(r)
+                    st.session_state.result["polished"] = current_text
+                    st.session_state.app_state = "done"
+                    _forget_completed_checkpoint(st.session_state.thread_id)
                     st.rerun()
                 except Exception:
                     import logging
-                    logging.exception("Revise failed")
+                    logging.exception("Accept failed")
                     st.session_state._resume_existing = True
                     st.session_state.app_state = "failed"
                     return
 
-    # D-15 + D-19: Export download button — passes polished text directly (no file read, no reload)
-    with col3:
-        export_text = st.session_state.get(edit_key, polished) or polished
-        export_id = (result.get("report_id") or st.session_state.thread_id)[:8]
-        report_date = result.get("date") or work_date(result.get("timezone"))
-        st.download_button(
-            label="⬇ 导出",
-            data=export_text,
-            file_name=f"daily_report_{report_date}_{export_id}.md",
-            mime="text/markdown",
-            use_container_width=True,
-            key="export_btn",
-        )
+        # D-15 + D-17: Revise button — shows feedback input, then resumes with revise decision
+        with col2:
+            if st.button(
+                "↻ 重新生成",
+                use_container_width=True,
+                key="revise_btn",
+                disabled=revision_count >= MAX_REVISIONS,
+            ):
+                st.session_state._show_feedback = True
+
+        if revision_count >= MAX_REVISIONS:
+            st.info("已达到修改上限，请直接编辑后接受；系统不会自动保存未经确认的版本。")
+
+        if st.session_state.get("_show_feedback"):
+            feedback = st.text_input("修改意见", key="feedback_input", placeholder="请说明修改方向...")
+            if st.button("确认修改", key="confirm_revise_btn"):
+                if not feedback.strip():
+                    st.warning("请填写修改意见")
+                else:
+                    try:
+                        current_text = st.session_state.get(edit_key, polished)
+                        if not current_text.strip():
+                            st.warning("日报内容不能为空")
+                            return
+                        result2, interrupt_payload, is_reviewing = _stream_graph(
+                            Command(resume={
+                                "decision": "revise",
+                                "feedback": feedback.strip(),
+                                "edited_text": current_text,
+                            }),
+                            config,
+                        )
+                        if is_reviewing:
+                            new_polished = interrupt_payload.get("polished") or result2.get("polished", polished)
+                            new_template = result2.get("template_type", template_type)
+                            st.session_state.result = {
+                                **result2,
+                                "polished": new_polished,
+                                "template_type": new_template,
+                                "revision_count": interrupt_payload.get(
+                                    "revision_count", result2.get("revision_count", revision_count + 1)
+                                ),
+                                "report_id": result2.get("report_id", result.get("report_id")),
+                                "interrupt_payload": interrupt_payload,
+                            }
+                            st.session_state._show_feedback = False
+                            st.session_state.app_state = "reviewing"
+                        else:
+                            st.session_state.result = dict(result2)
+                            st.session_state.app_state = "done"
+                        st.rerun()
+                    except Exception:
+                        import logging
+                        logging.exception("Revise failed")
+                        st.session_state._resume_existing = True
+                        st.session_state.app_state = "failed"
+                        return
+
+        # D-15 + D-19: Export download button — passes polished text directly (no file read, no reload)
+        with col3:
+            export_text = st.session_state.get(edit_key, polished) or polished
+            export_id = (result.get("report_id") or st.session_state.thread_id)[:8]
+            report_date = result.get("date") or work_date(result.get("timezone"))
+            st.download_button(
+                label="⬇ 导出",
+                data=export_text,
+                file_name=f"daily_report_{report_date}_{export_id}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                key="export_btn",
+            )
+
+
+def _render_snapshot_materials(snapshot: dict) -> None:
+    """Show stored original evidence as plain text, separate from model output."""
+    st.markdown("**当时的工作描述**")
+    st.text(snapshot["raw_input"] or "（未提供）")
+    st.markdown("**当时粘贴的数据／指标原文**")
+    st.text(snapshot["data_input"] or "（未提供）")
+    st.caption("这里保留输入材料；模型提炼的指标摘要不作为原始证据。")
+
+    git = snapshot["git"]
+    git_labels = {
+        "captured": "已记录当时筛选到的提交",
+        "empty": "当时未筛选到符合条件的提交",
+        "unavailable": "当时未能取得 Git 提交",
+        "not_requested": "未提供 Git 仓库",
+        "legacy_unknown": "旧任务未记录 Git 读取信息",
+    }
+    st.markdown("**当时的 Git 信息**")
+    st.caption(git_labels.get(git.get("status"), "读取状态未知"))
+    if git.get("repo_path") or git.get("report_date"):
+        with st.expander("Git 筛选信息", expanded=False):
+            if git.get("repo_path"):
+                st.text(f"仓库：{git['repo_path']}")
+            if git.get("resolved_author") or git.get("requested_author"):
+                st.text(
+                    f"指定作者：{git.get('requested_author') or '使用仓库配置'}\n"
+                    f"实际筛选作者：{git.get('resolved_author') or '未解析'}"
+                )
+            if git.get("report_date"):
+                st.text(
+                    f"工作日：{git['report_date']} · 时区：{git.get('timezone') or '未记录'}\n"
+                    f"筛选范围：{git.get('since') or '未记录'} → {git.get('until') or '未记录'}"
+                )
+    if git.get("log"):
+        st.code(git["log"], language="text")
+        st.caption("保留当时用于生成的提交摘要，不是整个仓库或代码文件的备份。")
 
 
 def _render_source_snapshot(record: dict) -> None:
@@ -520,41 +577,19 @@ def _render_source_snapshot(record: dict) -> None:
             return
         st.caption(
             f"采集时间：{snapshot['captured_at']}。这是生成当时固定的资料；"
-            "编辑日报或原始输入不会改写此快照。常见凭证内容已做脱敏。"
+            "编辑日报或原始输入不会改写此快照；右侧正文可能包含后续人工修改。常见凭证内容已做脱敏。"
         )
         if snapshot.get("capture_status") == "partial":
             st.warning("此快照只包含部分来源，未记录的内容不能视为已核验。")
-        st.markdown("**当时的工作描述**")
-        st.text(snapshot["raw_input"] or "（未提供）")
-        st.markdown("**当时粘贴的数据／指标原文**")
-        st.text(snapshot["data_input"] or "（未提供）")
-        st.caption("这里保留输入材料；模型提炼的指标摘要不作为原始证据。")
-
-        git = snapshot["git"]
-        git_labels = {
-            "captured": "已记录当时筛选到的提交",
-            "empty": "当时未筛选到符合条件的提交",
-            "unavailable": "当时未能取得 Git 提交",
-            "not_requested": "未提供 Git 仓库",
-            "legacy_unknown": "旧任务未记录 Git 读取信息",
-        }
-        st.markdown("**当时的 Git 信息**")
-        st.caption(git_labels.get(git.get("status"), "读取状态未知"))
-        if git.get("repo_path"):
-            st.text(f"仓库：{git['repo_path']}")
-        if git.get("resolved_author") or git.get("requested_author"):
-            st.text(
-                f"指定作者：{git.get('requested_author') or '使用仓库配置'}\n"
-                f"实际筛选作者：{git.get('resolved_author') or '未解析'}"
-            )
-        if git.get("report_date"):
-            st.text(
-                f"工作日：{git['report_date']} · 时区：{git.get('timezone') or '未记录'}\n"
-                f"筛选范围：{git.get('since') or '未记录'} → {git.get('until') or '未记录'}"
-            )
-        if git.get("log"):
-            st.code(git["log"], language="text")
-            st.caption("保留当时用于生成的提交摘要，不是整个仓库或代码文件的备份。")
+        sources_col, report_col = st.columns([1, 1.2], gap="large")
+        with sources_col:
+            st.markdown("### 原始材料")
+            with st.container(height=420, border=True):
+                _render_snapshot_materials(snapshot)
+        with report_col:
+            st.markdown("### 当前保存的日报")
+            with st.container(height=420, border=True):
+                st.markdown(record.get("polished", "") or "（正文为空）")
 
         st.markdown("**生成阶段的模型配置**")
         usage = snapshot.get("model_usage", [])

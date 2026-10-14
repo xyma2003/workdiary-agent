@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .redaction import redact_secrets
+from .source_snapshot import snapshot_for_storage
 
 
 _NUMBER_PATTERN = re.compile(r"(?<![\w])\d+(?:,\d{3})*(?:\.\d+)?")
@@ -21,6 +22,38 @@ def extract_numbers(text: object) -> set[str]:
     }
 
 
+def review_source_snapshot(state: Any) -> dict | None:
+    """Return usable frozen evidence for both the review UI and its checks.
+
+    Old or incompatible checkpoints keep their existing state-based fallback.
+    Empty fields in a valid snapshot are still authoritative: combining them
+    with later state values would silently invent evidence for that snapshot.
+    """
+    source = state.get("source_snapshot")
+    if not isinstance(source, dict):
+        return None
+    git = source.get("git")
+    if (
+        type(source.get("schema_version")) is not int
+        or source["schema_version"] != 1
+        or source.get("capture_status") not in ("complete", "partial")
+        or not all(
+            isinstance(source.get(key), str)
+            for key in ("captured_at", "raw_input", "data_input")
+        )
+        or not isinstance(git, dict)
+        or git.get("status") not in (
+            "captured", "empty", "unavailable", "not_requested", "legacy_unknown",
+        )
+        or (git.get("log") is not None and not isinstance(git["log"], str))
+    ):
+        return None
+    return snapshot_for_storage({
+        "source_snapshot": source,
+        "model_usage": state.get("model_usage", source.get("model_usage", [])),
+    })
+
+
 def analyze_report_quality(state: Any) -> dict:
     """Return deterministic warnings without making another model call.
 
@@ -33,8 +66,17 @@ def analyze_report_quality(state: Any) -> dict:
 
     # Only original user/repository material is authoritative. data_summary is
     # itself model-generated and must not be allowed to validate its own output.
+    snapshot = review_source_snapshot(state)
+    sources = (
+        {
+            "raw_input": snapshot["raw_input"],
+            "data_input": snapshot["data_input"],
+            "git_log": snapshot["git"]["log"],
+        }
+        if snapshot is not None else state
+    )
     source_text = "\n".join(
-        str(state.get(field) or "")
+        str(sources.get(field) or "")
         for field in ("raw_input", "data_input", "git_log")
     )
     source_numbers = extract_numbers(source_text)
