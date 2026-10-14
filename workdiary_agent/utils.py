@@ -2,7 +2,56 @@
 """Shared utilities for WorkDiary Agent nodes."""
 import os
 import math
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+
+from .redaction import redact_secrets
+from .source_snapshot import endpoint_identifier
+
+
+_MODEL_USAGE: ContextVar[tuple[str, list[dict]] | None] = ContextVar(
+    "workdiary_model_usage", default=None
+)
+
+
+@contextmanager
+def collect_model_usage(stage: str):
+    """Collect client configuration within one graph stage, including subgraphs."""
+    records: list[dict] = []
+    token = _MODEL_USAGE.set((stage, records))
+    try:
+        yield records
+    finally:
+        _MODEL_USAGE.reset(token)
+
+
+def _record_model_usage(client, *, provider: str, model: str,
+                        endpoint: str, temperature: float | None,
+                        timeout: float, max_retries: int):
+    """Observe only allowlisted metadata after a client was constructed."""
+    collecting = _MODEL_USAGE.get()
+    if collecting is None:
+        return client
+    stage, records = collecting
+    model_attribute = "model" if provider == "anthropic" else "model_name"
+    effective_model = getattr(client, model_attribute, None)
+    if not isinstance(effective_model, str):
+        effective_model = model
+    endpoint_attribute = "anthropic_api_url" if provider == "anthropic" else "openai_api_base"
+    effective_endpoint = getattr(client, endpoint_attribute, None)
+    if not isinstance(effective_endpoint, str) or not effective_endpoint:
+        effective_endpoint = endpoint
+    records.append({
+        "stage": stage,
+        "provider": provider,
+        "model": redact_secrets(effective_model),
+        "endpoint": endpoint_identifier(effective_endpoint),
+        "temperature": temperature,
+        "timeout_seconds": timeout,
+        "max_retries": max_retries,
+    })
+    return client
 
 
 class LLMConfigurationError(RuntimeError):
@@ -94,15 +143,19 @@ def make_llm():
     if provider == "siliconflow":
         api_key = os.environ.get("SILICONFLOW_API_KEY", "").strip()
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen3-32B"),
+        model = os.environ.get("SILICONFLOW_MODEL", "Qwen/Qwen3-32B")
+        endpoint = os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+        client = ChatOpenAI(
+            model=model,
             api_key=api_key,
-            base_url=os.environ.get(
-                "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
-            ),
+            base_url=endpoint,
             temperature=0,
             timeout=timeout,
             max_retries=max_retries,
+        )
+        return _record_model_usage(
+            client, provider=provider, model=model, endpoint=endpoint,
+            temperature=0, timeout=timeout, max_retries=max_retries,
         )
 
     if provider in {"openai", "openai-compatible"}:
@@ -118,7 +171,12 @@ def make_llm():
         base_url = os.environ.get("OPENAI_API_BASE", "").strip()
         if base_url:
             kwargs["base_url"] = base_url
-        return ChatOpenAI(**kwargs)
+        client = ChatOpenAI(**kwargs)
+        return _record_model_usage(
+            client, provider=provider, model=kwargs["model"],
+            endpoint=base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            temperature=0, timeout=timeout, max_retries=max_retries,
+        )
 
     from langchain_anthropic import ChatAnthropic
     custom_headers_str = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
@@ -141,7 +199,12 @@ def make_llm():
     }
     if anthropic_key:
         kwargs["api_key"] = anthropic_key
-    return ChatAnthropic(**kwargs)
+    client = ChatAnthropic(**kwargs)
+    return _record_model_usage(
+        client, provider=provider, model=kwargs["model"],
+        endpoint=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        temperature=None, timeout=timeout, max_retries=max_retries,
+    )
 
 
 def validate_repo_path(repo_path: str) -> str | None:

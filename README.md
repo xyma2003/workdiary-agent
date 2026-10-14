@@ -2,7 +2,7 @@
 
 A LangGraph-based workflow that turns rough work notes into a polished, manager-friendly daily report with evidence-aware Git enrichment and explicit human approval.
 
-The agent structures your input, pulls in today's git commits as context, selects (or lets you choose) a report template, drafts and refines the content from a manager's perspective, then pauses for your review. You can accept, edit, or request revisions (up to 3 rounds) before the report is saved and exported as a markdown file. Interrupted runs remain recoverable from their LangGraph checkpoints.
+The agent freezes your input and the report day's selected Git commits, structures the material, selects (or lets you choose) a report template, drafts and refines the content from a manager's perspective, then pauses for your review. You can accept, edit, or request revisions (up to 3 rounds) before the report and its source snapshot are saved; the report is also exported as a markdown file. Interrupted runs remain recoverable from their LangGraph checkpoints.
 
 Built as a portfolio project demonstrating: LangGraph state machine design, Human-in-the-Loop interrupt/resume with SQLite persistence, multi-node Pydantic structured outputs, and Streamlit UI integration.
 
@@ -13,8 +13,9 @@ Built as a portfolio project demonstrating: LangGraph state machine design, Huma
 ```
 User input: "今天修了个 bug，跑了个数据，开了两个会"
 
+→ capture:  work notes, pasted metrics, and selected Git commits frozen locally
 → extract:  { tasks: ["修复登录bug"], outputs: ["数据报告"], blockers: [] }
-→ enrich:   git log pulled: "fix(auth): resolve token expiry edge case"
+→ enrich:   reuse frozen Git; extract a metric summary from the pasted data
 → template: 技术型
 → draft:    structured first draft
 → polish:   "完成登录模块 Token 过期边界问题修复..."
@@ -148,10 +149,34 @@ preserved with an explicit notice.
 
 ### Privacy and trust boundaries
 
-- Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Common credential formats are redacted before model calls, but this is best-effort; do not submit data your provider is not allowed to process. The original input remains stored locally in history after approval.
+- Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Common credential formats are redacted in new source snapshots and before model calls, but this is best-effort; do not submit data your provider is not allowed to process. History and unfinished checkpoints are local files and may contain sensitive work material, including earlier inputs or subsequent edits.
 - Git enrichment skips commit collection when it cannot resolve an explicit author/email or the repository's local `user.email` / `user.name`; it never attributes every contributor's commits to you.
 - User text and repository-derived text are delimited as untrusted source data in prompts. This reduces prompt-injection risk but is not a complete security boundary.
 - Repository paths are read from the machine running Streamlit. Keep the app local or add deployment-level access controls before exposing it to other users.
+
+### Inspect a saved report's sources
+
+In **历史记录**, expand **生成时的来源快照** to inspect the work description and
+raw pasted metrics used for generation, the selected Git commit subjects, and
+the resolved author/date/timezone filters. The snapshot is checkpointed before
+the first model stage: later Git changes or a retry after a model failure do not
+silently replace those sources. A missing/unavailable Git result is recorded as
+such; the snapshot is not a backup of repository files or the entire commit history.
+
+The same view shows provider/model configuration for clients created in each
+successfully completed generation stage, including both router calls and later
+revision passes. It does not claim the provider actually served a particular
+model revision, or record every failed request/retry. API keys and request headers
+are excluded; endpoint identifiers retain only the origin, without user info,
+paths, queries or fragments. Model-derived metric summaries are not presented as
+raw evidence.
+
+The snapshot is stored once alongside the approved report in `history.db`.
+Editing the report, its date or its editable input preserves that original
+snapshot. Markdown exports continue to contain only the report. Older reports
+and tasks without capture data show **来源未保存**; the app never reconstructs
+their historical evidence from the current environment or repository. Unreadable
+or unsupported snapshots show a notice while the report remains usable.
 
 ---
 
@@ -161,10 +186,13 @@ preserved with an explicit notice.
 User input
     │
     ▼
+capture_sources ── freeze input + selected Git context in a checkpoint
+    │
+    ▼
 extract ── structured extraction (tasks / outputs / blockers / progress)
     │
     ▼
-enrich ── git log (today's commits) + LLM extraction of data metrics
+enrich ── reuse frozen Git + LLM extraction of data metrics
     │
     ▼
 route_template ── TemplateRouterAgent subgraph (技术型 / 业务型 / 混合型)
@@ -200,6 +228,7 @@ exports/ + history.db
 | Stable data directory | `WORKDIARY_DATA_DIR` can place both databases and exports on a durable volume independent of the launch directory |
 | Pre-save fact warnings | Checks compare the report and model-derived metric summary against original input/Git/data, require acknowledgement, and block likely credentials |
 | Synchronized CRUD | Saved-report edits update SQLite and the Markdown export together; deletion is confirmed and restricted to managed export paths |
+| Immutable source snapshot | Freeze sources before model work and retain them after editing; older records remain explicitly unknown |
 
 ---
 
@@ -215,6 +244,7 @@ workdiary-agent/
 ├── workdiary_agent/
 │   ├── graph.py            # StateGraph assembly, conditional edges, checkpointer init
 │   ├── state.py            # AgentState TypedDict + StructuredInfo Pydantic model
+│   ├── source_snapshot.py  # Frozen source evidence and credential-free metadata
 │   ├── recovery.py         # Discover incomplete checkpoint threads
 │   ├── time_utils.py       # Shared work-day timezone calculation
 │   ├── paths.py            # Stable runtime database/export paths

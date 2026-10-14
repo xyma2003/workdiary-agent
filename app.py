@@ -40,6 +40,7 @@ def get_graph():
 
 
 NODE_LABELS = {
+    "capture_sources": "已固定本次来源材料",
     "extract": "已提取工作信息",
     "enrich": "已读取可信上下文",
     "route_template": "已选择日报模板",
@@ -503,10 +504,83 @@ def _render_review_ui():
         )
 
 
+def _render_source_snapshot(record: dict) -> None:
+    """Read the saved evidence only; never refresh sources or call a model."""
+    with st.expander("生成时的来源快照", expanded=False):
+        status = record.get("source_snapshot_status", "missing")
+        snapshot = record.get("source_snapshot")
+        if status == "invalid":
+            st.warning("来源快照损坏，暂时无法展示；日报正文仍可使用。原记录未被改写。")
+            return
+        if status == "unsupported":
+            st.warning("来源快照版本暂不支持，请使用兼容版本查看；日报正文仍可使用。")
+            return
+        if not snapshot:
+            st.caption("来源未保存：这份旧日报或旧任务没有采集来源快照，无法补回当时的材料。")
+            return
+        st.caption(
+            f"采集时间：{snapshot['captured_at']}。这是生成当时固定的资料；"
+            "编辑日报或原始输入不会改写此快照。常见凭证内容已做脱敏。"
+        )
+        if snapshot.get("capture_status") == "partial":
+            st.warning("此快照只包含部分来源，未记录的内容不能视为已核验。")
+        st.markdown("**当时的工作描述**")
+        st.text(snapshot["raw_input"] or "（未提供）")
+        st.markdown("**当时粘贴的数据／指标原文**")
+        st.text(snapshot["data_input"] or "（未提供）")
+        st.caption("这里保留输入材料；模型提炼的指标摘要不作为原始证据。")
+
+        git = snapshot["git"]
+        git_labels = {
+            "captured": "已记录当时筛选到的提交",
+            "empty": "当时未筛选到符合条件的提交",
+            "unavailable": "当时未能取得 Git 提交",
+            "not_requested": "未提供 Git 仓库",
+            "legacy_unknown": "旧任务未记录 Git 读取信息",
+        }
+        st.markdown("**当时的 Git 信息**")
+        st.caption(git_labels.get(git.get("status"), "读取状态未知"))
+        if git.get("repo_path"):
+            st.text(f"仓库：{git['repo_path']}")
+        if git.get("resolved_author") or git.get("requested_author"):
+            st.text(
+                f"指定作者：{git.get('requested_author') or '使用仓库配置'}\n"
+                f"实际筛选作者：{git.get('resolved_author') or '未解析'}"
+            )
+        if git.get("report_date"):
+            st.text(
+                f"工作日：{git['report_date']} · 时区：{git.get('timezone') or '未记录'}\n"
+                f"筛选范围：{git.get('since') or '未记录'} → {git.get('until') or '未记录'}"
+            )
+        if git.get("log"):
+            st.code(git["log"], language="text")
+            st.caption("保留当时用于生成的提交摘要，不是整个仓库或代码文件的备份。")
+
+        st.markdown("**生成阶段的模型配置**")
+        usage = snapshot.get("model_usage", [])
+        st.caption(
+            "记录成功完成阶段所创建客户端的供应商、模型配置和服务地址；"
+            "不是服务端返回的实际模型版本，也不是完整调用审计。密钥及请求头不保存。"
+        )
+        if usage:
+            st.table([{
+                "阶段": entry.get("stage", "未记录"),
+                "供应商": entry.get("provider", "未记录"),
+                "模型配置": entry.get("model", "未记录"),
+                "服务地址（仅主机）": entry.get("endpoint") or "未记录",
+                "temperature": entry.get("temperature"),
+                "超时（秒）": entry.get("timeout_seconds"),
+                "重试上限": entry.get("max_retries"),
+            } for entry in usage])
+        else:
+            st.caption("未记录模型配置；不能据此推断当时使用的模型。")
+
+
 def _render_history_record(record: dict) -> None:
     """Render one history record with update, delete, and export actions."""
     record_id = int(record["id"])
     if st.session_state.get("history_edit_id") == record_id:
+        st.caption("以下修改不会改写生成时的来源快照。")
         try:
             initial_date = Date.fromisoformat(record["date"])
         except (TypeError, ValueError):
@@ -578,6 +652,7 @@ def _render_history_record(record: dict) -> None:
     st.text(record.get("raw_input", ""))
     st.markdown("**日报内容：**")
     st.markdown(record.get("polished", ""))
+    _render_source_snapshot(record)
 
     export_col, edit_col, delete_col = st.columns(3)
     export_col.download_button(

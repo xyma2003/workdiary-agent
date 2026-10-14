@@ -20,6 +20,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from .graph_constants import MAX_REVISIONS
 from .paths import data_path
 from .state import AgentState
+from .source_snapshot import capture_sources_node
+from .utils import collect_model_usage
 from .nodes import (
     extract_node,
     enrich_node,
@@ -65,6 +67,22 @@ def route_after_revise(state: AgentState) -> Literal["polish"]:
 # Graph factory
 # ---------------------------------------------------------------------------
 
+def _observe_node(name, node):
+    """Persist model identities only with the successful stage's state update."""
+    def observed(state):
+        node_state = state
+        if name == "enrich" and not state.get("source_snapshot"):
+            node_state = {**state, "_source_snapshot_legacy": True}
+        with collect_model_usage(name) as usage:
+            result = node(node_state)
+        if usage:
+            return {
+                **result,
+                "model_usage": [*state.get("model_usage", []), *usage],
+            }
+        return result
+    return observed
+
 def build_graph(use_sqlite: bool = False):
     """Build and compile the WorkDiary Agent StateGraph.
 
@@ -83,17 +101,19 @@ def build_graph(use_sqlite: bool = False):
     builder = StateGraph(AgentState)
 
     # --- Register nodes (string name decoupled from function name per Pattern 2) ---
-    builder.add_node("extract", extract_node)
-    builder.add_node("enrich", enrich_node)
-    builder.add_node("route_template", route_template_node)
-    builder.add_node("draft", draft_node)
-    builder.add_node("polish", polish_node)
+    builder.add_node("capture_sources", capture_sources_node)
+    builder.add_node("extract", _observe_node("extract", extract_node))
+    builder.add_node("enrich", _observe_node("enrich", enrich_node))
+    builder.add_node("route_template", _observe_node("route_template", route_template_node))
+    builder.add_node("draft", _observe_node("draft", draft_node))
+    builder.add_node("polish", _observe_node("polish", polish_node))
     builder.add_node("review", review_node)
     builder.add_node("revise", revise_node)
     builder.add_node("save", save_node)
 
     # --- Linear edges ---
-    builder.add_edge(START, "extract")
+    builder.add_edge(START, "capture_sources")
+    builder.add_edge("capture_sources", "extract")
     builder.add_edge("extract", "enrich")
     builder.add_edge("enrich", "route_template")
     builder.add_edge("route_template", "draft")

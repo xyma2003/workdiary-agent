@@ -72,6 +72,7 @@ def _read_git_log(
     git_author: str | None = None,
     timezone_name: str | None = None,
     report_date: str | None = None,
+    _details: dict | None = None,
 ) -> str | None:
     """Read the report day's commits from repo_path using GitPython.
 
@@ -81,6 +82,17 @@ def _read_git_log(
     Catches all git errors (D-04):
       git.InvalidGitRepositoryError, git.NoSuchPathError, git.GitCommandError, Exception
     """
+    details = _details if _details is not None else {}
+    details.update({
+        "status": "not_requested" if not repo_path.strip() else "unavailable",
+        "repo_path": repo_path or None,
+        "requested_author": git_author,
+        "resolved_author": None,
+        "timezone": None,
+        "report_date": report_date,
+        "since": None,
+        "until": None,
+    })
     safe_path = validate_repo_path(repo_path)
     if not safe_path or git is None:
         if safe_path and git is None:
@@ -88,7 +100,9 @@ def _read_git_log(
         return None
     try:
         repo = git.Repo(safe_path)
+        details["repo_path"] = safe_path
         author = _resolve_git_author(repo, git_author)
+        details["resolved_author"] = author
         if not author:
             # Trustworthy attribution is more important than including every
             # commit. Never claim all repository activity as the user's work.
@@ -102,6 +116,10 @@ def _read_git_log(
             day = datetime.now(tz).date()
         start = datetime.combine(day, time.min, tzinfo=tz)
         end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+        details.update({
+            "timezone": str(tz), "report_date": day.isoformat(),
+            "since": start.isoformat(), "until": end.isoformat(),
+        })
         # Git's --author argument is a regular expression. Escape it to narrow
         # candidates, then verify the parsed commit identity exactly so similar
         # names and email addresses are never attributed to the user.
@@ -129,14 +147,17 @@ def _read_git_log(
                 if len(commits) >= 100:
                     break
         if not commits:
+            details["status"] = "empty"
             return None
         # Only include the subject line. Multi-line commit bodies are noisy and
         # can contain instructions that should not be passed through as prompts.
+        details["status"] = "captured"
         return "\n".join(
             f"{c.hexsha[:7]} {c.message.strip().splitlines()[0][:200]}"
             for c in commits
         )
     except Exception as exc:
+        details["status"] = "unavailable"
         expected_errors = tuple(
             error_type
             for error_type in (
@@ -186,22 +207,34 @@ def _extract_data_summary(data_input: str) -> str | None:
 def enrich_node(state: AgentState) -> dict:
     """Enrich state with git commit log and extracted data metrics.
 
-    Step 1 (D-09): Read git log (sync IO) — always runs.
+    Step 1: Consume the Git log frozen before model generation. Direct helper
+            calls outside the graph retain the original repository-read behavior.
     Step 2 (D-09): Extract data metrics via LLM — only when data_input is non-empty.
 
     Returns partial state update with git_log and data_summary (both may be None).
     """
     # Step 1: Git log (D-01 to D-04)
-    repo_path = state.get("repo_path", "") or ""
-    git_log = _read_git_log(
-        repo_path,
-        git_author=state.get("git_author"),
-        timezone_name=state.get("timezone"),
-        report_date=state.get("date"),
-    )
+    snapshot = state.get("source_snapshot")
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("git"), dict):
+        git_log = snapshot["git"].get("log")
+    elif state.get("_source_snapshot_legacy"):
+        # An old checkpoint cannot acquire today's Git history as old evidence.
+        git_log = state.get("git_log")
+    else:
+        # Preserve direct helper usage outside the checkpointed graph.
+        repo_path = state.get("repo_path", "") or ""
+        git_log = _read_git_log(
+            repo_path,
+            git_author=state.get("git_author"),
+            timezone_name=state.get("timezone"),
+            report_date=state.get("date"),
+        )
 
     # Step 2: Data input extraction (D-05 to D-07)
-    data_input = state.get("data_input", "") or ""
+    data_input = (
+        snapshot.get("data_input", "") if isinstance(snapshot, dict)
+        else state.get("data_input", "")
+    ) or ""
     data_summary = _extract_data_summary(data_input)
 
     # D-10: return both fields, both can be None

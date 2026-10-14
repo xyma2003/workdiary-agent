@@ -66,6 +66,8 @@ class AgentState(TypedDict, total=False):
     timezone: Optional[str]         # IANA timezone used for the local work-day boundary
     data_input: Optional[str]      # NEW (D-05): user's pasted numeric/tabular text
     data_summary: Optional[str]    # NEW (D-06): LLM-extracted key metrics from data_input
+    source_snapshot: Optional[dict]  # Frozen evidence captured before any model calls
+    model_usage: list[dict]          # Credential-free config from successful graph stages
 
     # --- Final output (Phase 5: save node) ---
     date: Optional[str]

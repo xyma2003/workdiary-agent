@@ -8,6 +8,7 @@ DB_PATH is a module-level constant so tests can monkeypatch it:
     monkeypatch.setattr(sqlite_mod, "DB_PATH", str(tmp_path / "test.db"))
 """
 import sqlite3
+import json
 from datetime import datetime
 import uuid
 from contextlib import contextmanager
@@ -15,6 +16,7 @@ from typing import Any, Generator
 
 from ..paths import data_path
 from ..time_utils import work_date
+from ..source_snapshot import snapshot_for_storage
 
 DB_PATH = str(data_path("history.db"))
 
@@ -28,7 +30,8 @@ CREATE TABLE IF NOT EXISTS reports (
     polished TEXT,
     export_path TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT
+    updated_at TEXT,
+    source_snapshot_json TEXT
 )
 """
 
@@ -57,6 +60,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE reports ADD COLUMN export_path TEXT")
     if "updated_at" not in existing:
         conn.execute("ALTER TABLE reports ADD COLUMN updated_at TEXT")
+    if "source_snapshot_json" not in existing:
+        conn.execute("ALTER TABLE reports ADD COLUMN source_snapshot_json TEXT")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_report_id "
         "ON reports(report_id)"
@@ -97,12 +102,17 @@ def save_report(state: Any) -> str:
     template_type = state.get("template_type", "") or ""
     polished = state.get("polished", "") or ""
     export_path = state.get("export_path", "") or ""
+    snapshot = snapshot_for_storage(state)
+    snapshot_json = (
+        json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
+        if snapshot is not None else None
+    )
 
     with _db(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO reports "
             "(report_id, date, template_type, raw_input, polished, export_path, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "created_at, updated_at, source_snapshot_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(report_id) DO UPDATE SET "
             "date=excluded.date, template_type=excluded.template_type, "
             "raw_input=excluded.raw_input, polished=excluded.polished, "
@@ -116,10 +126,49 @@ def save_report(state: Any) -> str:
                 export_path,
                 now,
                 now,
+                snapshot_json,
             ),
         )
         conn.commit()
     return report_id
+
+
+def _decode_report(row: sqlite3.Row) -> dict:
+    """Keep historical content usable even if its optional snapshot is unreadable."""
+    record = dict(row)
+    encoded = record.pop("source_snapshot_json", None)
+    record["source_snapshot"] = None
+    record["source_snapshot_status"] = "missing"
+    if encoded is None:
+        return record
+    try:
+        snapshot = json.loads(encoded)
+        if not isinstance(snapshot, dict) or type(snapshot.get("schema_version")) is not int:
+            raise ValueError("Invalid snapshot envelope")
+        if snapshot["schema_version"] != 1:
+            record["source_snapshot_status"] = "unsupported"
+            return record
+        if (
+            snapshot.get("capture_status") not in {"complete", "partial"}
+            or not all(isinstance(snapshot.get(key), str) for key in ("captured_at", "raw_input", "data_input"))
+            or not isinstance(snapshot.get("git"), dict)
+            or snapshot["git"].get("status") not in {
+                "captured", "empty", "unavailable", "not_requested", "legacy_unknown",
+            }
+            or not isinstance(snapshot.get("model_usage"), list)
+            or not all(isinstance(item, dict) for item in snapshot["model_usage"])
+        ):
+            raise ValueError("Invalid snapshot fields")
+        # Apply the same allowlist on read; do not expose unknown fields from
+        # a manually modified file. This never rewrites the saved bytes.
+        record["source_snapshot"] = snapshot_for_storage({
+            "source_snapshot": snapshot,
+            "model_usage": snapshot["model_usage"],
+        })
+        record["source_snapshot_status"] = "saved"
+    except (TypeError, ValueError, KeyError):
+        record["source_snapshot_status"] = "invalid"
+    return record
 
 
 def _report_filter_sql(
@@ -174,7 +223,7 @@ def get_all_reports(
     )
     sql = (
         "SELECT id, report_id, date, template_type, raw_input, polished, "
-        "export_path, created_at, updated_at FROM reports"
+        "export_path, created_at, updated_at, source_snapshot_json FROM reports"
         f"{where_sql} ORDER BY date DESC, created_at DESC, id DESC"
     )
     if limit is not None:
@@ -186,7 +235,7 @@ def get_all_reports(
 
     with _db(DB_PATH) as conn:
         rows = conn.execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+        return [_decode_report(row) for row in rows]
 
 
 def count_reports(
@@ -217,10 +266,10 @@ def get_report(report_id: str) -> dict | None:
     with _db(DB_PATH) as conn:
         row = conn.execute(
             "SELECT id, report_id, date, template_type, raw_input, polished, "
-            "export_path, created_at, updated_at FROM reports WHERE report_id = ?",
+            "export_path, created_at, updated_at, source_snapshot_json FROM reports WHERE report_id = ?",
             (report_id,),
         ).fetchone()
-        return dict(row) if row else None
+        return _decode_report(row) if row else None
 
 
 def get_report_by_id(record_id: int) -> dict | None:
@@ -228,10 +277,10 @@ def get_report_by_id(record_id: int) -> dict | None:
     with _db(DB_PATH) as conn:
         row = conn.execute(
             "SELECT id, report_id, date, template_type, raw_input, polished, "
-            "export_path, created_at, updated_at FROM reports WHERE id = ?",
+            "export_path, created_at, updated_at, source_snapshot_json FROM reports WHERE id = ?",
             (record_id,),
         ).fetchone()
-        return dict(row) if row else None
+        return _decode_report(row) if row else None
 
 
 def update_report_by_id(
@@ -244,7 +293,7 @@ def update_report_by_id(
     polished: str,
     export_path: str,
 ) -> bool:
-    """Update one saved report and return whether the row still existed."""
+    """Update editable fields, retaining the original source snapshot unchanged."""
     updated_at = datetime.now().astimezone().isoformat()
     with _db(DB_PATH) as conn:
         cursor = conn.execute(
@@ -291,7 +340,7 @@ def delete_report_with_cleanup(record_id: int) -> tuple[dict, int | None] | None
                 conn.commit()
                 return None
 
-            report = dict(row)
+            report = _decode_report(row)
             cleanup_id = None
             if report.get("export_path"):
                 cursor = conn.execute(
