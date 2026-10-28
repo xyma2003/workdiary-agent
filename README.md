@@ -54,7 +54,7 @@ The [walkthrough](docs/demo.md) follows these steps in the actual application, i
 ## What the evidence can tell you
 
 - Sources are frozen before model work. Later repository changes or edits to the new-report form do not replace that evidence.
-- A model's metric summary is labeled **非原始证据**. Number checks are warnings, not proof that a report is factually correct; final approval stays with you.
+- A model's metric summary is labeled **非原始证据**. Number and time-unit checks are warnings, not proof that a report is factually correct; final approval stays with you.
 - A snapshot records selected commit subjects and client configuration, not a repository backup or proof of the exact model revision served. Older records without snapshots remain explicitly unknown.
 - Notes, pasted metrics, and selected Git subjects go to your configured provider. Redaction is best-effort; only provide material that provider is allowed to process.
 - History, checkpoints, and exports are local files. Keep the app local unless you add access controls. A deletion can leave a failed export cleanup task; the UI reports it and offers a retry.
@@ -64,9 +64,9 @@ Details: [review, privacy and storage boundaries](docs/evidence-and-storage.md).
 ## Maintenance and contributions
 
 - **Current status:** A local report-writing application with source snapshots, explicit review, checkpoint recovery, and offline regression checks. The walkthrough demonstrates the workflow with fixed responses; it does not validate model quality.
-- **Known limitation:** The [fact checker](workdiary_agent/quality.py) compares number tokens. It does not verify units, direction, or causality: a change from “10 ms” to “10 s” can currently pass the numeric check.
-- **Next small step — not implemented:** Add a focused warning for changed time units between original material and report text.
-- **Concrete contribution:** Extend [the quality tests](tests/test_quality.py) and fact checker so “10 ms” becoming “10 s” produces a warning, unchanged “10 ms” does not, and both checks use the frozen sources even when later state values differ. Keep the change deterministic and run `python -m pytest tests/test_quality.py -q`; it needs no model calls.
+- **Time-unit review:** A change from “10 ms” in the frozen sources to “10 s” in the report now produces a review warning. Equivalent aliases such as “10 毫秒” and “10 milliseconds” are accepted. Supported units and limits are described in [review checks](docs/evidence-and-storage.md#review-against-the-original-material).
+- **Known limitation:** Checks do not align individual metrics, convert units, or verify direction and causality. A number/unit pair found anywhere in the sources may belong to another metric; other quantities and unsupported time notation still need manual review.
+- **Contributing to these checks:** Add a minimal original-source/report example and an expected warning to [the quality tests](tests/test_quality.py). Keep the scope and unsupported cases explicit, and run `python -m pytest tests/test_quality.py -q`; it needs no model calls.
 
 For a bug report, [open an issue](https://github.com/xyma2003/workdiary-agent/issues/new) with the repository commit, OS/Python version, provider mode if relevant, minimal reproduction steps, and expected versus actual behavior. Use synthetic notes and redacted logs; do not attach keys, `.env`, private work notes, or history databases. A focused PR should explain the change, checks actually run, and remaining limits.
 

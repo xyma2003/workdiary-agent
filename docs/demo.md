@@ -22,7 +22,7 @@ The metrics field contains `【合成演示指标】本地验证用例：8 条�
 
 ## 2. Correct an unsupported claim
 
-The deliberately flawed fixed draft adds **“登录成功率提升 20%。”** The source has no production measurement. The UI flags the number `20` as absent from the source and blocks acceptance until the warning is handled. This check only compares numbers; it cannot establish factual correctness.
+The deliberately flawed fixed draft adds **“登录成功率提升 20%。”** The source has no production measurement. The UI flags the number `20` as absent from the source and blocks acceptance until the warning is handled. This example exercises the number check; the app also warns about supported time-unit changes. Neither check establishes factual correctness; see [review checks](evidence-and-storage.md#review-against-the-original-material).
 
 In **日报内容（可直接编辑）**, remove that sentence and add:
 

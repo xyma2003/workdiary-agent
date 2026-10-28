@@ -228,6 +228,41 @@ def test_inline_accept_saves_edited_report_with_the_original_snapshot(runtime):
     assert sqlite_mod.count_reports() == 1
 
 
+def test_time_unit_warning_blocks_accept_until_corrected_without_changing_sources(runtime):
+    runtime.reports = ["完成订单链路验证，请求耗时为 15s，验证了 8 条用例。"]
+    app = _generate(runtime)
+    report_id = app.session_state.result["report_id"]
+    captured = copy.deepcopy(app.session_state.result["source_snapshot"])
+    calls_before = len(runtime.model_calls)
+
+    warning_text = "\n".join(warning.value for warning in app.warning)
+    assert "时间单位" in warning_text
+    assert "15 s" in warning_text
+    assert "ms" in warning_text
+    assert app.button(key="accept_btn").disabled
+    assert sqlite_mod.count_reports() == 0
+
+    # Correct the draft itself; the frozen 15 ms evidence is not changed.
+    _editor(app).set_value(BODY).run()
+    assert not app.exception
+    assert not app.warning
+    assert not app.button(key="accept_btn").disabled
+    assert app.session_state.result["source_snapshot"] == captured
+    assert DATA in _text(_sources_column(app))
+    app.button(key="accept_btn").click().run()
+
+    assert not app.exception
+    assert app.session_state.app_state == "done"
+    saved = sqlite_mod.get_report(report_id)
+    assert saved["polished"] == BODY
+    for field in ("raw_input", "data_input", "git", "captured_at"):
+        assert saved["source_snapshot"][field] == captured[field]
+    assert BODY in Path(saved["export_path"]).read_text(encoding="utf-8")
+    assert sqlite_mod.count_reports() == 1
+    assert len(runtime.model_calls) == calls_before
+    assert len(runtime.git_reads) == 1
+
+
 def test_revision_keeps_inline_edits_and_uses_a_new_editor_without_changing_sources(runtime):
     app = _generate(runtime)
     captured = copy.deepcopy(app.session_state.result["source_snapshot"])

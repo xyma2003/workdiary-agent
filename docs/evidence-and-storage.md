@@ -32,6 +32,31 @@ prove factual correctness. A new report edit resets any warning acknowledgement.
 When resuming an older task without a source snapshot, the app labels its remaining
 checkpoint material as incomplete instead of reading today's repository.
 
+Time-unit checks flag a supported number/unit pair when the same numeric value
+appears in the frozen sources with other time units, but not with the report's
+unit: for example, **10 ms → 10 s**. The warning uses the existing review flow:
+correct the report, or explicitly acknowledge it after checking the sources.
+Editing the report invalidates that acknowledgement.
+
+The check recognizes unsigned ASCII integers and decimals with a leading digit
+(including grouped commas), with these case-insensitive English or Chinese units:
+
+| Unit | Accepted forms |
+| --- | --- |
+| Milliseconds | `ms`, `millisecond(s)`, `毫秒` |
+| Seconds | `s`, `sec(s)`, `second(s)`, `秒` |
+| Minutes | `min(s)`, `minute(s)`, `分钟` |
+| Hours | `h`, `hr(s)`, `hour(s)`, `小时` |
+| Days | `d`, `day(s)`, `天` |
+
+Trailing decimal zeros and leading integer zeros do not change the compared
+value. This is a conservative warning: it does not match values to specific
+metrics or assess conversions such as **1000 ms → 1 s**. The original number
+checks still apply independently. Ambiguous shorthand (`m`, `分`, `时`, `日`),
+signed values, scientific notation, compound units, and other quantities are not
+validated by this check. A matching pair anywhere in the original material suppresses this
+unit warning, so it is not evidence that the report's claim is correct.
+
 ### Inspect a saved report's sources
 
 In **历史记录**, expand **生成时的来源快照** to compare the original material with
