@@ -668,7 +668,7 @@ def _render_history_record(record: dict) -> None:
             st.rerun()
         if save_clicked:
             try:
-                update_saved_report(
+                updated = update_saved_report(
                     record_id,
                     date=edit_date.isoformat(),
                     template_type=edit_template,
@@ -685,7 +685,12 @@ def _render_history_record(record: dict) -> None:
             else:
                 st.session_state.history_edit_id = None
                 st.session_state.pop("history_edit_record", None)
-                st.session_state.history_notice = "日报已更新。"
+                if updated.get("cleanup_status") == "pending":
+                    st.session_state.history_notice = "日报已更新，旧导出待清理。可在下方“待清理导出”中重试。"
+                    st.session_state.history_notice_level = "warning"
+                else:
+                    st.session_state.history_notice = "日报已更新。"
+                    st.session_state.history_notice_level = "success"
                 st.rerun()
         return
 
@@ -778,7 +783,7 @@ def _set_cleanup_notice(status: str, *, deleted: bool = False) -> None:
 
 
 def _render_export_cleanups() -> None:
-    """Keep failed deletion cleanup visible even when history is empty."""
+    """Keep failed export cleanup visible even when history is empty."""
     try:
         tasks = list_export_cleanups()
     except Exception:
@@ -789,7 +794,7 @@ def _render_export_cleanups() -> None:
     if not tasks:
         return
     st.subheader(f"待清理导出（{len(tasks)}）")
-    st.caption("日报记录已删除，以下导出尚未确认清理完成。检查文件占用或目录权限后，可以继续重试。")
+    st.caption("以下旧导出尚未确认清理完成，可能来自改日期或删除日报。检查文件占用或目录权限后，可以继续重试。")
     for task in tasks:
         with st.container(border=True):
             detail_col, action_col = st.columns([4, 1])

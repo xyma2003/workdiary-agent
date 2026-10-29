@@ -15,6 +15,7 @@ from .storage.export import (
 )
 from .storage.sqlite import (
     delete_report_with_cleanup,
+    enqueue_export_cleanup,
     export_cleanup_transaction,
     get_report_by_id,
     report_edit_transaction,
@@ -137,6 +138,9 @@ def update_saved_report(
     SQLite auto-rollback, compensation reacquires the lock and verifies the old
     version; a newer edit/deletion is preserved. This is not an atomic
     filesystem/database transaction across a process crash.
+
+    The returned record includes transient cleanup_status and cleanup_id fields.
+    A pending status means the old export's retry task committed with the edit.
     """
     _validate_update(
         date=date,
@@ -168,6 +172,8 @@ def update_saved_report(
 
         original_new = Path(new_export_path).read_bytes() if os.path.exists(new_export_path) else None
         originals: dict[str, bytes | None] = {}
+        cleanup_status = "not_needed"
+        cleanup_id = None
         try:
             save_markdown(polished.strip(), date, report_id)
             originals[new_export_path] = original_new
@@ -180,24 +186,31 @@ def update_saved_report(
             if not updated:
                 raise LookupError("日报记录不存在或已被删除")
 
-            if (
-                old_export_path and not same_path
-                and is_managed_export_path(old_export_path)
-                and not _export_used_by_other_report(conn, old_export_path, record_id)
-            ):
-                try:
-                    if os.path.isfile(old_export_path):
+            if old_export_path and not same_path:
+                if not is_managed_export_path(old_export_path):
+                    cleanup_status = "unmanaged"
+                elif _export_used_by_other_report(conn, old_export_path, record_id):
+                    cleanup_status = "in_use"
+                else:
+                    cleanup_status = "complete"
+                    try:
                         old_content = Path(old_export_path).read_bytes()
                         if delete_export_path(old_export_path):
                             originals[old_export_path] = old_content
-                except OSError:
-                    logger.exception("Failed to remove the superseded report export")
+                    except FileNotFoundError:
+                        pass  # An already missing old export needs no retry.
+                    except OSError as exc:
+                        cleanup_id = enqueue_export_cleanup(
+                            conn, old, last_error=redact_secrets(str(exc)),
+                        )
+                        cleanup_status = "pending"
+                        logger.exception("Superseded report export remains queued for cleanup")
 
             result = get_report_by_id(record_id, connection=conn)
             if result is None:
                 raise LookupError("日报记录更新后不可用")
             conn.commit()
-            return result
+            return {**result, "cleanup_status": cleanup_status, "cleanup_id": cleanup_id}
         except BaseException:
             _compensate_failed_edit(conn, old, originals)
             raise

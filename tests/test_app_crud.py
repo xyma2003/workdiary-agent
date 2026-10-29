@@ -1,5 +1,6 @@
 """Streamlit history CRUD smoke test."""
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -194,3 +195,106 @@ def test_active_editor_survives_record_leaving_filtered_history(change):
         assert sqlite_mod.get_report_by_id(record['id'])['polished'] == '其他页面更新'
     else:
         assert sqlite_mod.get_report_by_id(record['id']) is None
+
+
+def test_date_edit_cleanup_failure_preserves_saved_report_and_retries_across_sessions():
+    record = _seed_report()
+    old_export = Path(record["export_path"])
+    old_bytes = old_export.read_bytes()
+    app = _history_app()
+    _button(app, "编辑").click().run()
+    next(item for item in app.date_input if item.label == "日报日期").set_value(date(2026, 4, 25))
+    next(area for area in app.text_area if area.label == "日报内容").set_value("改日期后已保存的新日报")
+
+    with patch(
+        "workdiary_agent.report_service.delete_export_path",
+        side_effect=PermissionError("验收：旧日期导出被占用"),
+    ) as remove:
+        _button(app, "保存修改").click().run()
+    assert not app.exception
+    assert not app.success
+    assert any("日报已更新" in item.value and "旧导出待清理" in item.value for item in app.warning)
+    assert not any("日报记录已删除" in item.value for item in app.caption)
+    remove.assert_called_once_with(str(old_export))
+
+    updated = sqlite_mod.get_report_by_id(record["id"])
+    assert updated is not None
+    assert updated["report_id"] == record["report_id"]
+    assert updated["date"] == "2026-04-25"
+    assert updated["polished"] == "改日期后已保存的新日报"
+    assert updated["raw_input"] == record["raw_input"]
+    assert updated["template_type"] == record["template_type"]
+    new_export = Path(updated["export_path"])
+    assert new_export != old_export
+    new_bytes = new_export.read_bytes()
+    assert "改日期后已保存的新日报" in new_bytes.decode("utf-8")
+    assert old_export.read_bytes() == old_bytes
+    tasks = sqlite_mod.list_export_cleanups()
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["export_path"] == str(old_export)
+    assert "旧日期导出被占用" in task["last_error"]
+    assert _button(app, "重试清理").key == f"hist_retry_cleanup_{task['id']}"
+
+    # No UI notice survives into this new session. The retry comes from SQLite,
+    # while the edited report remains saved and visible under its new date.
+    app = _history_app()
+    assert not app.exception
+    assert _button(app, "重试清理").key == f"hist_retry_cleanup_{task['id']}"
+    assert not any("日报记录已删除" in item.value for item in app.caption)
+    assert any("改日期后已保存的新日报" in item.value for item in app.markdown)
+    assert sqlite_mod.get_report_by_id(record["id"]) == updated
+    app.text_input(key="history_query").set_value("完全不匹配的内容").run()
+    assert _button(app, "重试清理")
+
+    with patch(
+        "workdiary_agent.report_service.delete_export_path",
+        side_effect=PermissionError("验收：旧文件仍被占用"),
+    ) as remove:
+        _button(app, "重试清理").click().run()
+    assert not app.exception
+    assert not app.success
+    assert any("尚未完成" in item.value for item in app.warning)
+    remove.assert_called_once_with(str(old_export))
+    remaining = sqlite_mod.list_export_cleanups()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == task["id"]
+    assert "旧文件仍被占用" in remaining[0]["last_error"]
+    assert old_export.read_bytes() == old_bytes
+    assert new_export.read_bytes() == new_bytes
+    assert sqlite_mod.get_report_by_id(record["id"]) == updated
+
+    # Only cleanup is retried after the file becomes removable: no second edit,
+    # no duplicate task, and no change to the new report or its Markdown bytes.
+    _button(app, "重试清理").click().run()
+    assert not app.exception
+    assert any("导出清理已完成" in item.value for item in app.success)
+    assert not old_export.exists()
+    assert new_export.read_bytes() == new_bytes
+    assert sqlite_mod.get_report_by_id(record["id"]) == updated
+    assert sqlite_mod.list_export_cleanups() == []
+    assert not any(button.label == "重试清理" for button in app.button)
+    app = _history_app()
+    assert not any(button.label == "重试清理" for button in app.button)
+    assert sqlite_mod.get_report_by_id(record["id"]) == updated
+
+
+def test_successful_date_edit_reports_success_after_old_export_cleanup():
+    record = _seed_report()
+    old_export = Path(record["export_path"])
+    app = _history_app()
+    _button(app, "编辑").click().run()
+    next(item for item in app.date_input if item.label == "日报日期").set_value(date(2026, 4, 25))
+    next(area for area in app.text_area if area.label == "日报内容").set_value("日期和内容已更新")
+    _button(app, "保存修改").click().run()
+
+    assert not app.exception
+    assert any("日报已更新" in item.value for item in app.success)
+    assert not any("旧导出待清理" in item.value for item in app.warning)
+    assert not any(button.label == "重试清理" for button in app.button)
+    updated = sqlite_mod.get_report_by_id(record["id"])
+    assert updated["date"] == "2026-04-25"
+    assert updated["polished"] == "日期和内容已更新"
+    assert not old_export.exists()
+    assert "日期和内容已更新" in Path(updated["export_path"]).read_text(encoding="utf-8")
+    assert sqlite_mod.list_export_cleanups() == []

@@ -10,6 +10,13 @@ reports remain. Missing files count as already cleaned up. Files outside the exp
 directory, paths containing symlinks, and exports still used by another report are
 preserved with an explicit notice.
 
+Changing a report's date creates its new export and removes the superseded one.
+If removing the old file fails, the report is still updated, but the page warns
+that the old export needs cleanup. The same durable **重试清理** queue keeps the
+old date and path across refreshes and restarts. Retrying only removes that old
+file; it does not regenerate or change the current report. Each retry rechecks
+path safety and whether another report now uses the file before deleting it.
+
 ### Editing from more than one page
 
 History edits remember the version that was opened. If another page saves a

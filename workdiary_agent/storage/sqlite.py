@@ -404,6 +404,29 @@ def list_export_cleanups() -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def enqueue_export_cleanup(
+    conn: sqlite3.Connection, report: dict, *, last_error: str,
+) -> int:
+    """Queue the old export from a report already read in the caller's transaction.
+
+    The caller supplies its original persisted record, not a user-entered path.
+    Do not open another connection or commit here: an edited report and its
+    cleanup task must either both commit or both roll back.
+    """
+    if not conn.in_transaction:
+        raise RuntimeError("Export cleanup must be queued inside the report transaction")
+    cursor = conn.execute(
+        "INSERT INTO export_cleanup "
+        "(record_id, report_date, export_path, created_at, last_error) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            report["id"], report["date"], report["export_path"],
+            datetime.now().astimezone().isoformat(), last_error,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
 @contextmanager
 def export_cleanup_transaction(
     cleanup_id: int,
