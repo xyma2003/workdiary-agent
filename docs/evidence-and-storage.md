@@ -10,6 +10,20 @@ reports remain. Missing files count as already cleaned up. Files outside the exp
 directory, paths containing symlinks, and exports still used by another report are
 preserved with an explicit notice.
 
+### Editing from more than one page
+
+History edits remember the version that was opened. If another page saves a
+change first, the older editor shows a conflict and keeps its unsaved text.
+Copy any text you need, cancel the edit, and reopen the latest version before
+saving again. Edits serialize the database update and Markdown export so two
+overlapping saves do not leave different report contents in those two places.
+This handles competing edits and recoverable write errors; it is not an atomic
+transaction across SQLite and the filesystem during a process or machine crash.
+If SQLite automatically rolls back and another save or deletion has already
+taken over, the failed edit skips its old file restoration. This protects the
+newer result; an unused export created by the failed edit may remain for manual
+inspection. That error path does not yet queue an automatic cleanup task.
+
 ### Privacy and trust boundaries
 
 - Work notes, pasted metrics, and selected Git commit subjects are sent to the configured LLM provider. Common credential formats are redacted in new source snapshots and before model calls, but this is best-effort; do not submit data your provider is not allowed to process. History and unfinished checkpoints are local files and may contain sensitive work material, including earlier inputs or subsequent edits.

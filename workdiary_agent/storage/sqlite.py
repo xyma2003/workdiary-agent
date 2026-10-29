@@ -272,8 +272,15 @@ def get_report(report_id: str) -> dict | None:
         return _decode_report(row) if row else None
 
 
-def get_report_by_id(record_id: int) -> dict | None:
+def get_report_by_id(
+    record_id: int, *, connection: sqlite3.Connection | None = None,
+) -> dict | None:
     """Return one persisted report by its database primary key."""
+    if connection is not None:
+        row = connection.execute(
+            "SELECT * FROM reports WHERE id = ?", (record_id,),
+        ).fetchone()
+        return _decode_report(row) if row else None
     with _db(DB_PATH) as conn:
         row = conn.execute(
             "SELECT id, report_id, date, template_type, raw_input, polished, "
@@ -281,6 +288,25 @@ def get_report_by_id(record_id: int) -> dict | None:
             (record_id,),
         ).fetchone()
         return _decode_report(row) if row else None
+
+
+@contextmanager
+def report_edit_transaction(
+    record_id: int,
+) -> Generator[tuple[sqlite3.Connection, dict | None], None, None]:
+    """Hold the database write lock across an edit and its file compensation.
+
+    The caller explicitly commits only after coordinating the export. Leaving
+    this context without a successful commit rolls back the database after the
+    caller has had a chance to restore files while the write lock is still held.
+    """
+    with _db(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn, get_report_by_id(record_id, connection=conn)
+        finally:
+            if conn.in_transaction:
+                conn.rollback()
 
 
 def update_report_by_id(
@@ -292,10 +318,11 @@ def update_report_by_id(
     raw_input: str,
     polished: str,
     export_path: str,
+    connection: sqlite3.Connection | None = None,
 ) -> bool:
     """Update editable fields, retaining the original source snapshot unchanged."""
-    updated_at = datetime.now().astimezone().isoformat()
-    with _db(DB_PATH) as conn:
+    def update(conn: sqlite3.Connection) -> bool:
+        updated_at = datetime.now().astimezone().isoformat()
         cursor = conn.execute(
             "UPDATE reports SET report_id = ?, date = ?, template_type = ?, "
             "raw_input = ?, polished = ?, export_path = ?, updated_at = ? "
@@ -311,8 +338,14 @@ def update_report_by_id(
                 record_id,
             ),
         )
-        conn.commit()
         return cursor.rowcount == 1
+
+    if connection is not None:
+        return update(connection)
+    with _db(DB_PATH) as conn:
+        updated = update(conn)
+        conn.commit()
+        return updated
 
 
 def delete_report_by_id(record_id: int) -> bool:

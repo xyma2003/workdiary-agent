@@ -142,3 +142,55 @@ def test_unmanaged_export_is_reported_as_preserved(tmp_path):
     assert any("文件已保留" in item.value for item in app.warning)
     assert outside.read_text(encoding="utf-8") == "keep"
     assert sqlite_mod.list_export_cleanups() == []
+
+
+def test_stale_editor_keeps_draft_and_does_not_overwrite_another_session():
+    record = _seed_report()
+    first, second = _history_app(), _history_app()
+    _button(first, "编辑").click().run()
+    _button(second, "编辑").click().run()
+    next(area for area in first.text_area if area.label == "日报内容").set_value("页面 A 的新日报")
+    _button(first, "保存修改").click().run()
+    assert not first.exception
+    assert sqlite_mod.get_report_by_id(record["id"])["polished"] == "页面 A 的新日报"
+
+    # Rerunning with a fresh row must not advance the editor's baseline.
+    second.run()
+    next(area for area in second.text_area if area.label == "日报内容").set_value("页面 B 的未保存草稿")
+    _button(second, "保存修改").click().run()
+    assert not second.exception
+    assert any("更新" in item.value and "其他页面" in item.value for item in second.error)
+    assert not second.success
+    assert next(area for area in second.text_area if area.label == "日报内容").value == "页面 B 的未保存草稿"
+    latest = sqlite_mod.get_report_by_id(record["id"])
+    assert latest["polished"] == "页面 A 的新日报"
+    assert "页面 A 的新日报" in Path(latest["export_path"]).read_text(encoding="utf-8")
+    assert "页面 B" not in Path(latest["export_path"]).read_text(encoding="utf-8")
+
+    _button(second, "取消").click().run()
+    _button(second, "编辑").click().run()
+    assert next(area for area in second.text_area if area.label == "日报内容").value == "页面 A 的新日报"
+
+
+@pytest.mark.parametrize('change', ['template', 'deleted'])
+def test_active_editor_survives_record_leaving_filtered_history(change):
+    from workdiary_agent.report_service import delete_saved_report, update_saved_report
+    record = _seed_report()
+    app = _history_app()
+    app.selectbox(key='history_template_filter').set_value('技术型').run()
+    _button(app, '编辑').click().run()
+    next(area for area in app.text_area if area.label == '日报内容').set_value('必须保留的草稿')
+    if change == 'template':
+        update_saved_report(record['id'], date=record['date'], template_type='业务型',
+                            raw_input=record['raw_input'], polished='其他页面更新', expected_record=record)
+    else:
+        delete_saved_report(record['id'])
+    _button(app, '保存修改').click().run()
+    assert not app.exception
+    assert app.error
+    assert next(area for area in app.text_area if area.label == '日报内容').value == '必须保留的草稿'
+    assert _button(app, '取消')
+    if change == 'template':
+        assert sqlite_mod.get_report_by_id(record['id'])['polished'] == '其他页面更新'
+    else:
+        assert sqlite_mod.get_report_by_id(record['id']) is None

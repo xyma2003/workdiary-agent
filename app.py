@@ -1,5 +1,6 @@
 """Streamlit UI for generation, checkpoint recovery, review, and history."""
 import hashlib
+from copy import deepcopy
 from datetime import date as Date
 import os
 import uuid
@@ -615,6 +616,13 @@ def _render_history_record(record: dict) -> None:
     """Render one history record with update, delete, and export actions."""
     record_id = int(record["id"])
     if st.session_state.get("history_edit_id") == record_id:
+        # Keep the version the editor opened. A rerun must not silently replace
+        # the concurrency check with a newer row while retaining the old draft.
+        baseline = st.session_state.get("history_edit_record")
+        if not baseline or baseline.get("id") != record_id:
+            baseline = deepcopy(record)
+            st.session_state.history_edit_record = baseline
+        record = baseline
         st.caption("以下修改不会改写生成时的来源快照。")
         try:
             initial_date = Date.fromisoformat(record["date"])
@@ -656,6 +664,7 @@ def _render_history_record(record: dict) -> None:
 
         if cancel_clicked:
             st.session_state.history_edit_id = None
+            st.session_state.pop("history_edit_record", None)
             st.rerun()
         if save_clicked:
             try:
@@ -665,6 +674,7 @@ def _render_history_record(record: dict) -> None:
                     template_type=edit_template,
                     raw_input=edit_raw_input,
                     polished=edit_polished,
+                    expected_record=baseline,
                 )
             except (ValueError, LookupError) as exc:
                 st.error(str(exc))
@@ -674,6 +684,7 @@ def _render_history_record(record: dict) -> None:
                 st.error("保存修改失败，请重试。")
             else:
                 st.session_state.history_edit_id = None
+                st.session_state.pop("history_edit_record", None)
                 st.session_state.history_notice = "日报已更新。"
                 st.rerun()
         return
@@ -707,6 +718,7 @@ def _render_history_record(record: dict) -> None:
         use_container_width=True,
     ):
         st.session_state.history_edit_id = record_id
+        st.session_state.history_edit_record = deepcopy(record)
         st.session_state.history_delete_id = None
         st.rerun()
     if delete_col.button(
@@ -716,6 +728,7 @@ def _render_history_record(record: dict) -> None:
     ):
         st.session_state.history_delete_id = record_id
         st.session_state.history_edit_id = None
+        st.session_state.pop("history_edit_record", None)
         st.rerun()
 
     if st.session_state.get("history_delete_id") == record_id:
@@ -804,6 +817,14 @@ def _render_history_page():
 
     _render_export_cleanups()
 
+    # Keep an open draft visible even when another session changes its date,
+    # template or content so it no longer matches this page's filters.
+    editing = st.session_state.get("history_edit_record")
+    editing_id = st.session_state.get("history_edit_id")
+    if editing and editing.get("id") == editing_id:
+        with st.expander(f"正在编辑：{editing['date']}", expanded=True):
+            _render_history_record(editing)
+
     col_query, col_template = st.columns([3, 1])
     with col_query:
         query = st.text_input(
@@ -835,7 +856,6 @@ def _render_history_page():
     if st.session_state.get("_history_filter_signature") != filter_signature:
         st.session_state._history_filter_signature = filter_signature
         st.session_state.history_page = 0
-        st.session_state.history_edit_id = None
         st.session_state.history_delete_id = None
 
     col_refresh, _ = st.columns([1, 5])
@@ -876,6 +896,8 @@ def _render_history_page():
     st.markdown(f"共 **{total}** 条记录")
 
     for r in reports:
+        if editing and r["id"] == editing_id:
+            continue
         # D-21: st.expander labeled with date and template_type
         label = f"{r['date']} — {r.get('template_type') or '未知模板'}"
         is_active = r["id"] in {

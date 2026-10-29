@@ -64,6 +64,7 @@ Details: [review, privacy and storage boundaries](docs/evidence-and-storage.md).
 ## Maintenance and contributions
 
 - **Current status:** A local report-writing application with source snapshots, explicit review, checkpoint recovery, and offline regression checks. The walkthrough demonstrates the workflow with fixed responses; it does not validate model quality.
+- **Concurrent edits:** History saves check the version you opened. If another page saved first, your draft stays in the editor and the app asks you to reopen the latest version. Competing edits serialize the history update and Markdown export; [limits and recovery](docs/evidence-and-storage.md#editing-from-more-than-one-page).
 - **Time-unit review:** A change from “10 ms” in the frozen sources to “10 s” in the report now produces a review warning. Equivalent aliases such as “10 毫秒” and “10 milliseconds” are accepted. Supported units and limits are described in [review checks](docs/evidence-and-storage.md#review-against-the-original-material).
 - **Known limitation:** Checks do not align individual metrics, convert units, or verify direction and causality. A number/unit pair found anywhere in the sources may belong to another metric; other quantities and unsupported time notation still need manual review.
 - **Contributing to these checks:** Add a minimal original-source/report example and an expected warning to [the quality tests](tests/test_quality.py). Keep the scope and unsupported cases explicit, and run `python -m pytest tests/test_quality.py -q`; it needs no model calls.
